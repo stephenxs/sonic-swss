@@ -148,6 +148,14 @@ bool OrchDaemon::init()
         CFG_DTEL_EVENT_TABLE_NAME
     };
 
+    TableConnector stateDbTxErr(m_stateDb, /*"TX_ERR_STATE"*/STATE_TX_ERR_TABLE_NAME);
+    TableConnector applDbTxErr(m_applDb, /*"TX_ERR_APPL"*/APP_TX_ERR_TABLE_NAME);
+    TableConnector confDbTxErr(m_configDb, /*"TX_ERR_CFG"*/CFG_PORT_TX_ERR_TABLE_NAME);
+    gTxMonOrch = new TxMonOrch(applDbTxErr, confDbTxErr, stateDbTxErr);
+
+    SWSS_LOG_NOTICE("Create TxMonOrch object %p\n", gTxMonOrch);
+
+
     vector<string> wm_tables = {
         CFG_WATERMARK_TABLE_NAME,
         CFG_FLEX_COUNTER_TABLE_NAME
@@ -163,7 +171,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap.
      * That is ensured implicitly by the order of map key, "LAG_TABLE" is smaller than "VLAN_TABLE" in lexicographic order.
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch };
+    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, gTxMonOrch };
 
 
     bool initialize_dtel = false;

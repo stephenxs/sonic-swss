@@ -27,6 +27,7 @@
 #include "flexcounterorch.h"
 #include "watermarkorch.h"
 #include "directory.h"
+#include "txmonorch.h"
 
 using namespace swss;
 
