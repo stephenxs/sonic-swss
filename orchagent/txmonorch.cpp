@@ -298,7 +298,6 @@ int TxMonOrch::pollOnePortErrorStatistics(const string &port, TxErrorStatistics 
 
 	//refresh the local copy of last time statistics
 	tesStatistics(stat) = txErrStatistics;
-//	SWSS_LOG_INFO("TX_ERR_CFG: port %s lasttime set to %d\n", port.c_str(), tesStatistics(stat));
 
 	return 0;
 }
