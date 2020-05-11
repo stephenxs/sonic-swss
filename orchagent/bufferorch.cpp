@@ -26,12 +26,12 @@ static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 };
 
 type_map BufferOrch::m_buffer_type_maps = {
-    {CFG_BUFFER_POOL_TABLE_NAME, new object_map()},
-    {CFG_BUFFER_PROFILE_TABLE_NAME, new object_map()},
-    {CFG_BUFFER_QUEUE_TABLE_NAME, new object_map()},
-    {CFG_BUFFER_PG_TABLE_NAME, new object_map()},
-    {CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_map()},
-    {CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()}
+    {APP_BUFFER_POOL_TABLE_NAME, new object_map()},
+    {APP_BUFFER_PROFILE_TABLE_NAME, new object_map()},
+    {APP_BUFFER_QUEUE_TABLE_NAME, new object_map()},
+    {APP_BUFFER_PG_TABLE_NAME, new object_map()},
+    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_map()},
+    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()}
 };
 
 BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) :
@@ -48,25 +48,39 @@ BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) :
     initFlexCounterGroupTable();
 };
 
+BufferOrch::BufferOrch(DBConnector *applDb, vector<TableConnector> &tableConnectors) :
+    Orch(tableConnectors),
+    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
+    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
+    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
+    m_countersDbRedisClient(m_countersDb.get())
+{
+    SWSS_LOG_ENTER();
+    initTableHandlers();
+    initBufferReadyLists(applDb);
+    initFlexCounterGroupTable();
+};
+
 void BufferOrch::initTableHandlers()
 {
     SWSS_LOG_ENTER();
-    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_POOL_TABLE_NAME, &BufferOrch::processBufferPool));
-    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PROFILE_TABLE_NAME, &BufferOrch::processBufferProfile));
-    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_QUEUE_TABLE_NAME, &BufferOrch::processQueue));
-    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PG_TABLE_NAME, &BufferOrch::processPriorityGroup));
-    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, &BufferOrch::processIngressBufferProfileList));
-    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferOrch::processEgressBufferProfileList));
+    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_POOL_TABLE_NAME, &BufferOrch::processBufferPool));
+    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PROFILE_TABLE_NAME, &BufferOrch::processBufferProfile));
+    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_QUEUE_TABLE_NAME, &BufferOrch::processQueue));
+    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PG_TABLE_NAME, &BufferOrch::processPriorityGroup));
+    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, &BufferOrch::processIngressBufferProfileList));
+    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferOrch::processEgressBufferProfileList));
 }
 
 void BufferOrch::initBufferReadyLists(DBConnector *db)
 {
     SWSS_LOG_ENTER();
 
-    Table pg_table(db, CFG_BUFFER_PG_TABLE_NAME);
+    Table pg_table(db, APP_BUFFER_PG_TABLE_NAME);
     initBufferReadyList(pg_table);
 
-    Table queue_table(db, CFG_BUFFER_QUEUE_TABLE_NAME);
+    Table queue_table(db, APP_BUFFER_QUEUE_TABLE_NAME);
     initBufferReadyList(queue_table);
 }
 
@@ -82,7 +96,7 @@ void BufferOrch::initBufferReadyList(Table& table)
     {
         m_ready_list[key] = false;
 
-        auto tokens = tokenize(key, config_db_key_delimiter);
+        auto tokens = tokenize(key, delimiter);
         if (tokens.size() != 2)
         {
             SWSS_LOG_ERROR("Wrong format of a table '%s' key '%s'. Skip it", table.getTableName().c_str(), key.c_str());
@@ -172,7 +186,7 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
     // these bits. This assumes the total number of buffer pools to be no greater than 32, which should satisfy all use cases.
     unsigned int noWmClrCapability = 0;
     unsigned int bitMask = 1;
-    for (const auto &it : *(m_buffer_type_maps[CFG_BUFFER_POOL_TABLE_NAME]))
+    for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
     {
         sai_status_t status = sai_buffer_api->clear_buffer_pool_stats(
                 it.second,
@@ -199,7 +213,7 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
     vector<FieldValueTuple> fvTuples;
     fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statList);
     bitMask = 1;
-    for (const auto &it : *(m_buffer_type_maps[CFG_BUFFER_POOL_TABLE_NAME]))
+    for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
     {
         string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second);
 
@@ -230,7 +244,7 @@ const object_map &BufferOrch::getBufferPoolNameOidMap(void)
     // In the case different Orches are running in
     // different threads, caller may need to grab a read lock
     // before calling this function
-    return *m_buffer_type_maps[CFG_BUFFER_POOL_TABLE_NAME];
+    return *m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME];
 }
 
 task_process_status BufferOrch::processBufferPool(Consumer &consumer)
@@ -519,7 +533,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     sai_uint32_t range_low, range_high;
 
     SWSS_LOG_DEBUG("Processing:%s", key.c_str());
-    tokens = tokenize(key, config_db_key_delimiter);
+    tokens = tokenize(key, delimiter);
     if (tokens.size() != 2)
     {
         SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
@@ -622,7 +636,7 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     }
 
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
-    tokens = tokenize(key, config_db_key_delimiter);
+    tokens = tokenize(key, delimiter);
     if (tokens.size() != 2)
     {
         SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
@@ -719,9 +733,9 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     string op = kfvOp(tuple);
 
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
-    if (consumer.getTableName() != CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME)
+    if (consumer.getTableName() != APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME)
     {
-        SWSS_LOG_ERROR("Key with invalid table type passed in %s, expected:%s", key.c_str(), CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
+        SWSS_LOG_ERROR("Key with invalid table type passed in %s, expected:%s", key.c_str(), APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
         return task_process_status::task_invalid_entry;
     }
     vector<string> port_names = tokenize(key, list_item_delimiter);
@@ -819,10 +833,12 @@ void BufferOrch::doTask()
     //     ├── buffer queue
     //     └── buffer pq table
 
-    auto pool_consumer = getExecutor((CFG_BUFFER_POOL_TABLE_NAME));
+    SWSS_LOG_INFO("Handling buffer task");
+
+    auto pool_consumer = getExecutor((APP_BUFFER_POOL_TABLE_NAME));
     pool_consumer->drain();
 
-    auto profile_consumer = getExecutor(CFG_BUFFER_PROFILE_TABLE_NAME);
+    auto profile_consumer = getExecutor(APP_BUFFER_PROFILE_TABLE_NAME);
     profile_consumer->drain();
 
     for(auto &it : m_consumerMap)
@@ -842,6 +858,7 @@ void BufferOrch::doTask(Consumer &consumer)
 
     if (!gPortsOrch->isConfigDone())
     {
+        SWSS_LOG_INFO("Buffer task for %s can't be executed ahead of port config done", consumer.getTableName().c_str());
         return;
     }
 

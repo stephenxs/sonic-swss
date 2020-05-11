@@ -76,12 +76,19 @@ int main(int argc, char **argv)
         vector<string> cfg_buffer_tables = {
             CFG_PORT_TABLE_NAME,
             CFG_PORT_CABLE_LEN_TABLE_NAME,
+            CFG_BUFFER_POOL_TABLE_NAME,
+            CFG_BUFFER_PROFILE_TABLE_NAME,
+            CFG_BUFFER_PG_TABLE_NAME,
+            CFG_BUFFER_QUEUE_TABLE_NAME,
+            CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+            CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
+        DBConnector applDb("APPL_DB", 0);
 
-        BufferMgr buffmgr(&cfgDb, &stateDb, pg_lookup_file, cfg_buffer_tables);
+        BufferMgr buffmgr(&cfgDb, &stateDb, &applDb, pg_lookup_file, cfg_buffer_tables);
 
         // TODO: add tables in stateDB which interface depends on to monitor list
         std::vector<Orch *> cfgOrchList = {&buffmgr};
