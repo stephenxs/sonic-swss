@@ -13,13 +13,19 @@
 using namespace std;
 using namespace swss;
 
-BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, string pg_lookup_file, const vector<string> &tableNames) :
+BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, string pg_lookup_file, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
         m_cfgBufferProfileTable(cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME),
         m_cfgBufferPgTable(cfgDb, CFG_BUFFER_PG_TABLE_NAME),
-        m_cfgLosslessPgPoolTable(cfgDb, CFG_BUFFER_POOL_TABLE_NAME)
+        m_cfgLosslessPgPoolTable(cfgDb, CFG_BUFFER_POOL_TABLE_NAME),
+        m_applBufferPoolTable(applDb, APP_BUFFER_POOL_TABLE_NAME),
+        m_applBufferProfileTable(applDb, APP_BUFFER_PROFILE_TABLE_NAME),
+        m_applBufferPgTable(applDb, APP_BUFFER_PG_TABLE_NAME),
+        m_applBufferQueueTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME),
+        m_applBufferIngressProfileListTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME),
+        m_applBufferEgressProfileListTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)
 {
     readPgProfileLookupFile(pg_lookup_file);
 }
@@ -202,11 +208,115 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
     return task_process_status::task_success;
 }
 
+void BufferMgr::transformSeperator(string &name)
+{
+    size_t pos;
+    while ((pos = name.find("|")) != string::npos)
+        name.replace(pos, 1, ":");
+}
+/*
+ * This function copies the data from tables in CONFIG_DB to APPL_DB.
+ * With dynamically buffer calculation supported, the following tables
+ * will be moved to APPL_DB from CONFIG_DB because the CONFIG_DB contains
+ * confgured entries only while APPL_DB contains dynamically generated entries
+ *  - BUFFER_POOL
+ *  - BUFFER_PROFILE
+ *  - BUFFER_PG
+ * The following tables have to be moved to APPL_DB because they reference
+ * some entries that have been moved to APPL_DB
+ *  - BUFFER_QUEUE
+ *  - BUFFER_PORT_INGRESS_PROFILE_LIST
+ *  - BUFFER_PORT_EGRESS_PROFILE_LIST   
+ * One thing we need to handle is to transform the separator from | to :
+ * The following items contain separator:
+ *  - keys of each item
+ *  - pool in BUFFER_POOL
+ *  - profile in BUFFER_PG
+ */
+void BufferMgr::doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+
+        //transform the separator in key from "|" to ":"
+        transformSeperator(key);
+
+        string op = kfvOp(t);
+        if (op == SET_COMMAND)
+        {
+            vector<FieldValueTuple> fvVector;
+
+            SWSS_LOG_INFO("Inserting entry %s from CONFIG_DB to APPL_DB", key.c_str());
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                //transform the separator in values from "|" to ":"
+                if (fvField(i) == "pool")
+                    transformSeperator(fvValue(i));
+                if (fvField(i) == "profile")
+                    transformSeperator(fvValue(i));
+                if (fvField(i) == "profile_list")
+                    transformSeperator(fvValue(i));
+                fvVector.emplace_back(FieldValueTuple(fvField(i), fvValue(i)));
+                SWSS_LOG_INFO("Inserting field %s value %s", fvField(i).c_str(), fvValue(i).c_str());
+            }
+            applTable.set(key, fvVector);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_INFO("Removing entry %s from APPL_DB", key.c_str());
+            applTable.del(key);
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
 void BufferMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
     string table_name = consumer.getTableName();
+
+    if (table_name == CFG_BUFFER_POOL_TABLE_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferPoolTable);
+        return;
+    }
+
+    if (table_name == CFG_BUFFER_PROFILE_TABLE_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferProfileTable);
+        return;
+    }
+
+    if (table_name == CFG_BUFFER_PG_TABLE_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferPgTable);
+        return;
+    }
+
+    if (table_name == CFG_BUFFER_QUEUE_TABLE_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferQueueTable);
+        return;
+    }
+
+    if (table_name == CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferIngressProfileListTable);
+        return;
+    }
+
+    if (table_name == CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferEgressProfileListTable);
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())

@@ -29,7 +29,7 @@ typedef std::map<std::string, std::string> port_cable_length_t;
 class BufferMgr : public Orch
 {
 public:
-    BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, std::string pg_lookup_file, const std::vector<std::string> &tableNames);
+    BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, std::string pg_lookup_file, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
 private:
@@ -38,6 +38,14 @@ private:
     Table m_cfgBufferProfileTable;
     Table m_cfgBufferPgTable;
     Table m_cfgLosslessPgPoolTable;
+
+    ProducerStateTable m_applBufferProfileTable;
+    ProducerStateTable m_applBufferPgTable;
+    ProducerStateTable m_applBufferPoolTable;
+    ProducerStateTable m_applBufferQueueTable;
+    ProducerStateTable m_applBufferIngressProfileListTable;
+    ProducerStateTable m_applBufferEgressProfileListTable;
+
     bool m_pgfile_processed;
 
     pg_profile_lookup_t m_pgProfileLookup;
@@ -46,6 +54,9 @@ private:
     void readPgProfileLookupFile(std::string);
     task_process_status doCableTask(std::string port, std::string cable_length);
     task_process_status doSpeedUpdateTask(std::string port, std::string speed);
+    void doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
+
+    void transformSeperator(std::string &name);
 
     void doTask(Consumer &consumer);
 };

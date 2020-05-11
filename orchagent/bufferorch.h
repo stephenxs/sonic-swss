@@ -32,6 +32,7 @@ class BufferOrch : public Orch
 {
 public:
     BufferOrch(DBConnector *db, vector<string> &tableNames);
+    BufferOrch(DBConnector *applDb, vector<TableConnector> &tableConnectors);
     bool isPortReady(const std::string& port_name) const;
     static type_map m_buffer_type_maps;
     void generateBufferPoolWatermarkCounterIdList(void);
