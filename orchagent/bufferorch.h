@@ -27,6 +27,7 @@ const string buffer_profile_field_name      = "profile";
 const string buffer_value_ingress           = "ingress";
 const string buffer_value_egress            = "egress";
 const string buffer_profile_list_field_name = "profile_list";
+const string buffer_headroom_type_field_name= "headroom_type";
 
 class BufferOrch : public Orch
 {
