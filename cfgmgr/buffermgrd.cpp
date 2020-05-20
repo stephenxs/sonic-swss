@@ -7,8 +7,10 @@
 #include "exec.h"
 #include "schema.h"
 #include "buffermgr.h"
+#include "buffermgrdyn.h"
 #include <fstream>
 #include <iostream>
+#include "json.h"
 
 using namespace std;
 using namespace swss;
@@ -40,16 +42,27 @@ void usage()
     cout << "       values: 'speed, cable, size, xon,  xoff, dynamic_threshold, xon_offset'" << endl;
 }
 
+void test_json(std::string json)
+{
+    std::vector<FieldValueTuple> table;
+    JSon::readJson(json, table);
+    for (auto i : table)
+        cout << "field" << fvField(i) << "value" << fvValue(i) << endl;
+}
+
 int main(int argc, char **argv)
 {
     int opt;
     string pg_lookup_file = "";
+    string switch_table_file = "";
+    string peripherial_table_file = "";
+    string json_file = "";
     Logger::linkToDbNative("buffermgrd");
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting buffermgrd ---");
 
-    while ((opt = getopt(argc, argv, "l:h")) != -1 )
+    while ((opt = getopt(argc, argv, "l:h:s:p:j")) != -1 )
     {
         switch (opt)
         {
@@ -59,20 +72,26 @@ int main(int argc, char **argv)
         case 'h':
             usage();
             return 1;
+        case 's':
+            switch_table_file = optarg;
+            break;
+        case 'p':
+            peripherial_table_file = optarg;
+            break;
+        case 'j':
+            json_file = optarg;
+            std::cout << "jsonfile: " << json_file << endl;
+            test_json(json_file);
+            return 0;
         default: /* '?' */
             usage();
             return EXIT_FAILURE;
         }
     }
 
-    if (pg_lookup_file.empty())
-    {
-        usage();
-        return EXIT_FAILURE;
-    }
-
     try
     {
+        std::vector<Orch *> cfgOrchList;
         vector<string> cfg_buffer_tables = {
             CFG_PORT_TABLE_NAME,
             CFG_PORT_CABLE_LEN_TABLE_NAME,
@@ -88,10 +107,26 @@ int main(int argc, char **argv)
         DBConnector stateDb("STATE_DB", 0);
         DBConnector applDb("APPL_DB", 0);
 
-        BufferMgr buffmgr(&cfgDb, &stateDb, &applDb, pg_lookup_file, cfg_buffer_tables);
+        if (!pg_lookup_file.empty())
+        {
+            cfgOrchList.emplace_back(new BufferMgr(&cfgDb, &stateDb, &applDb, pg_lookup_file, cfg_buffer_tables));
+        }
+        else if (!switch_table_file.empty())
+        {
+            // Load the json file containing the SWITCH_TABLE
+            if (!peripherial_table_file.empty())
+            {
+                //Load the json file containing the PERIPHERIAL_TABLE
+            }
+            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, pg_lookup_file, cfg_buffer_tables));
+        }
+        else
+        {
+            usage();
+            return EXIT_FAILURE;
+        }
 
-        // TODO: add tables in stateDB which interface depends on to monitor list
-        std::vector<Orch *> cfgOrchList = {&buffmgr};
+        auto buffmgr = cfgOrchList[0];
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -113,7 +148,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                buffmgr.doTask();
+                buffmgr->doTask();
                 continue;
             }
 
