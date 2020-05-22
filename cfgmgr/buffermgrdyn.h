@@ -137,21 +137,26 @@ private:
     std::string parseObjectNameFromKey(std::string &key, size_t pos/* = 1*/);
     std::string parseObjectNameFromReference(std::string &reference);
 
+    // APPL_DB table operations
+    void updateBufferPoolToDb(std::string &name, buffer_pool_t &pool);
+    void updateBufferProfileToDb(std::string &name, buffer_profile_t &profile);
+    void updateBufferPgToDb(std::string &key, std::string &profile, bool add);
+
     // Meta flows
     void calculateHeadroomSize(std::string &speed, std::string &cable, std::string &gearbox_model, buffer_profile_t &headroom);
     void recalculateSharedBufferPool();
     task_process_status allocateProfile(std::string &speed, std::string &cable, std::string &gearbox_model, std::string &profile_name, buffer_profile_t &headroom);
     void releaseProfile(std::string &speed, std::string &cable_length, std::string &gearbox_model);
-    void setBufferPg(std::string &key, std::string &profile, bool add);
-    bool isHeadroomResourceValid(std::string &port, std::string lossy_pg_changed, buffer_profile_t &profile_info);
+    bool isHeadroomResourceValid(std::string &port, buffer_profile_t &profile_info, std::string lossy_pg_changed);
 
     // Main flows
     task_process_status doSpeedOrCableLengthUpdateTask(std::string &port, std::string &speed, std::string &cable_length);
     task_process_status doUpdatePgTask(std::string &pg_key, std::string &profile);
     task_process_status doRemovePgTask(std::string &pg_key);
-    task_process_status doUpdateStaticProfileTask(std::string &pg_key, std::string &profile);
-    task_process_status doRemoveStaticProfileTask(std::string &pg_key, std::string &profile);
-    task_process_status doAdminStatusTaks(std::string port, std::string adminStatus);
+    task_process_status doUpdateHeadroomOverrideTask(std::string &pg_key, std::string &profile);
+    task_process_status doRemoveHeadroomOverrideTask(std::string &pg_key, std::string &profile);
+    task_process_status doAdminStatusTask(std::string port, std::string adminStatus);
+    task_process_status doUpdateStaticProfileTask(std::string &profileName, buffer_profile_t &profile);
 
     // Table update handlers
     task_process_status handleCableLenTable(Consumer &consumer);
