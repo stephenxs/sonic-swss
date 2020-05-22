@@ -127,13 +127,130 @@ void BufferMgrDynamic::calculateHeadroomSize(string &speed, string &cable, strin
     // Call vendor-specific lua plugin to calculate the xon, xoff, xon_offset, size and threshold
     vector<string> keys = {};
     vector<string> argv = {};
+
+    keys.emplace_back(headroom.name);
+    argv.emplace_back(speed);
+    argv.emplace_back(cable);
+    argv.emplace_back("0");
+
     auto ret = swss::runRedisScript(*m_applDb, m_headroomSha, keys, argv);
-    // Transfrom the result to a map
-    
+
+    // The format of the result:
+    // a list of strings containing key, value pairs with colon as separator
+    // each is a field of the profile
+    // "xon:18432"
+    // "xoff:18432"
+    // "size:36864"
+
+    for ( auto i : ret)
+    {
+        auto pairs = tokenize(i, ':');
+        if (pairs[0] == "xon")
+            headroom.xon = pairs[1];
+        if (pairs[0] == "xoff")
+            headroom.xoff = pairs[1];
+        if (pairs[0] == "size")
+            headroom.size = pairs[1];
+        if (pairs[0] == "xon_offset")
+            headroom.xon_offset = pairs[1];
+        if (pairs[0] == "threshold")
+            headroom.threshold = pairs[1];
+    }
 }
 
 void BufferMgrDynamic::recalculateSharedBufferPool()
 {
+    vector<string> keys = {};
+    vector<string> argv = {};
+
+    auto ret = runRedisScript(*m_applDb, m_bufferpoolSha, keys, argv);
+
+    // The format of the result:
+    // a list of strings containing key, value pairs with colon as separator
+    // each is the size of a buffer pool
+
+    for ( auto i : ret)
+    {
+        auto pairs = tokenize(i, ':');
+        auto poolName = pairs[0];
+        auto pool = m_bufferPoolLookup[pairs[0]];
+
+        pool.total_size = pairs[1];
+
+        updateBufferPoolToDb(poolName, pool);
+    }
+}
+
+// For buffer pool, only size can be updated on-the-fly
+void BufferMgrDynamic::updateBufferPoolToDb(string &name, buffer_pool_t &pool)
+{
+    vector<FieldValueTuple> fvVector;
+
+    fvVector.emplace_back(make_pair("size", pool.total_size));
+
+    m_applBufferPoolTable.set(string(APP_BUFFER_POOL_TABLE_NAME) + ":" + name, fvVector);
+}
+
+void BufferMgrDynamic::updateBufferProfileToDb(string &name, buffer_profile_t &profile)
+{
+    vector<FieldValueTuple> fvVector;
+    string mode = getPgPoolMode();
+
+    if (mode.empty())
+    {
+        // this should never happen if switch initialized properly
+        SWSS_LOG_ERROR("PG lossless pool is not yet created, creating profile %s failed", name.c_str());
+        return;
+    }
+
+    // profile threshold field name
+    mode += "_th";
+    string pg_pool_reference = string(APP_BUFFER_POOL_TABLE_NAME) +
+        m_applBufferProfileTable.getTableNameSeparator() +
+        INGRESS_LOSSLESS_PG_POOL_NAME;
+
+    fvVector.emplace_back(make_pair("pool", "[" + pg_pool_reference + "]"));
+    fvVector.emplace_back(make_pair("xon", profile.xon));
+    if (profile.xon_offset.empty()) {
+        fvVector.emplace_back(make_pair("xon_offset", profile.xon_offset));
+    }
+    fvVector.emplace_back(make_pair("xoff", profile.xoff));
+    fvVector.emplace_back(make_pair("size", profile.size));
+    fvVector.emplace_back(make_pair(mode, profile.threshold));
+
+    m_applBufferProfileTable.set(string(APP_BUFFER_PROFILE_TABLE_NAME) + ":" + name, fvVector);
+}
+
+// Database operation
+// Set/remove BUFFER_PG table entry
+void BufferMgrDynamic::updateBufferPgToDb(string &key, string &profile, bool add)
+{
+    string buffer_pg_key = key;
+
+    if (add)
+    {
+        vector<FieldValueTuple> fvVector;
+
+        fvVector.clear();
+
+        string buffer_profile_key = profile;
+        transformSeperator(buffer_profile_key);
+
+        string profile_ref = string("[") +
+            APP_BUFFER_PROFILE_TABLE_NAME +
+            m_applBufferPgTable.getTableNameSeparator() +
+            buffer_profile_key +
+            "]";
+
+        fvVector.clear();
+ 
+        fvVector.push_back(make_pair("profile", profile_ref));
+        m_applBufferPgTable.set(buffer_pg_key, fvVector);
+    }
+    else
+    {
+        m_applBufferPgTable.del(buffer_pg_key);
+    }
 }
 
 // We have to check the headroom ahead of applying them
@@ -143,7 +260,6 @@ task_process_status BufferMgrDynamic::allocateProfile(string &speed, string &cab
     // Create record in BUFFER_PROFILE table
     // key format is pg_lossless_<speed>_<cable>_profile
     string buffer_profile_key;
-    vector<FieldValueTuple> fvVector;
 
     if (gearbox_model.empty())
     {
@@ -163,40 +279,17 @@ task_process_status BufferMgrDynamic::allocateProfile(string &speed, string &cab
     if (profileRef == m_bufferProfileLookup.end()
         || profileRef->second.xoff.empty())
     {
+        auto &profile = m_bufferProfileLookup[buffer_profile_key];
         SWSS_LOG_NOTICE("Creating new profile '%s'", buffer_profile_key.c_str());
-
-        string mode = getPgPoolMode();
-
-        if (mode.empty())
-        {
-            // this should never happen if switch initialized properly
-            SWSS_LOG_WARN("PG lossless pool is not yet created, creating profile %s failed", buffer_profile_key.c_str());
-            return task_process_status::task_need_retry;
-        }
 
         // Call vendor-specific lua plugin to calculate the xon, xoff, xon_offset, size
         // Pay attention, the threshold can contain valid value
-        calculateHeadroomSize(speed, cable, gearbox_model, m_bufferProfileLookup[buffer_profile_key]);
-
-        // profile threshold field name
-        mode += "_th";
-        string pg_pool_reference = string(APP_BUFFER_POOL_TABLE_NAME) +
-                                   m_applBufferProfileTable.getTableNameSeparator() +
-                                   INGRESS_LOSSLESS_PG_POOL_NAME;
-
-        fvVector.emplace_back(make_pair("pool", "[" + pg_pool_reference + "]"));
-        fvVector.emplace_back(make_pair("xon", headroom.xon));
-        if (headroom.xon_offset.empty()) {
-            fvVector.emplace_back(make_pair("xon_offset", headroom.xon_offset));
-        }
-        fvVector.emplace_back(make_pair("xoff", headroom.xoff));
-        fvVector.emplace_back(make_pair("size", headroom.size));
-        fvVector.emplace_back(make_pair(mode, headroom.threshold));
-
-        m_applBufferProfileTable.set(string(APP_BUFFER_PROFILE_TABLE_NAME) + ":" + buffer_profile_key, fvVector);
+        calculateHeadroomSize(speed, cable, gearbox_model, profile);
 
         // Store the headroom info in the internal cache
         headroom = m_bufferProfileLookup[buffer_profile_key];
+
+        updateBufferProfileToDb(buffer_profile_key, profile);
 
         SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been created successfully", buffer_profile_key.c_str());
     }
@@ -210,7 +303,7 @@ task_process_status BufferMgrDynamic::allocateProfile(string &speed, string &cab
     return task_process_status::task_success;
 }
 
-void BufferMgrDynamic::releaseProfile(std::string &speed, std::string &cable_length, std::string &gearbox_model)
+void BufferMgrDynamic::releaseProfile(string &speed, string &cable_length, string &gearbox_model)
 {
     // Crete record in BUFFER_PROFILE table
     // key format is pg_lossless_<speed>_<cable>_profile
@@ -261,40 +354,7 @@ void BufferMgrDynamic::releaseProfile(std::string &speed, std::string &cable_len
     SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been released successfully", buffer_profile_key.c_str());
 }
 
-// Database operation
-// Set/remove BUFFER_PG table entry
-void BufferMgrDynamic::setBufferPg(string &key, string &profile, bool add)
-{
-    string buffer_pg_key = key;
-    transformSeperator(buffer_pg_key);
-
-    if (add)
-    {
-        vector<FieldValueTuple> fvVector;
-
-        fvVector.clear();
-
-        string buffer_profile_key = profile;
-        transformSeperator(buffer_profile_key);
-
-        string profile_ref = string("[") +
-            APP_BUFFER_PROFILE_TABLE_NAME +
-            m_applBufferPgTable.getTableNameSeparator() +
-            buffer_profile_key +
-            "]";
-
-        fvVector.clear();
- 
-        fvVector.push_back(make_pair("profile", profile_ref));
-        m_applBufferPgTable.set(buffer_pg_key, fvVector);
-    }
-    else
-    {
-        m_applBufferPgTable.del(buffer_pg_key);
-    }
-}
-
-bool BufferMgrDynamic::isHeadroomResourceValid(string &port, string lossy_pg_changed, buffer_profile_t &profile_info)
+bool BufferMgrDynamic::isHeadroomResourceValid(string &port, buffer_profile_t &profile_info, string lossy_pg_changed = "")
 {
     //port: used to check whether its a split port
     //pg_changed: which pg's profile has been changed?
@@ -347,7 +407,7 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(string &por
 
             //Calculate whether accumulative headroom size exceeds the maximum value
             //Abort if it does
-            if (!isHeadroomResourceValid(port, "", pgProfileNew))
+            if (!isHeadroomResourceValid(port, pgProfileNew))
             {
                 SWSS_LOG_ERROR("Update speed (%s) and cable length (%s) for port %s failed, accumulative headroom size exceeds the limit",
                                speed.c_str(), cable_length.c_str(), port.c_str());
@@ -356,7 +416,7 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(string &por
         }
 
         //appl_db Database operation: set item BUFFER_PG|<port>|<pg>
-        setBufferPg(key, profileName, true);
+        updateBufferPgToDb(key, profileName, true);
         isHeadroomUpdated = true;
     }
 
@@ -388,11 +448,11 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(string &pg_key, string &pro
     string value;
     port_info_t &portInfo = m_portInfoLookup[port];
 
-    if (portInfo.profile_name.empty())
+    if (!portInfo.profile_name.empty())
     {
         // Headroom information has already been deployed for the port, no need to recaluclate
         // but need to check accumulative headroom size limit.
-        if (!isHeadroomResourceValid(port, string(""), m_bufferProfileLookup[portInfo.profile_name]))
+        if (!isHeadroomResourceValid(port, m_bufferProfileLookup[portInfo.profile_name]))
         {
             SWSS_LOG_ERROR("Failed to set BUFFER_PG for %s to profile %s, accumulative headroom exceeds limit",
                            pg_key.c_str(), portInfo.profile_name.c_str());
@@ -400,7 +460,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(string &pg_key, string &pro
         }
 
         SWSS_LOG_NOTICE("Set BUFFER_PG for %s to profile %s", pg_key.c_str(), portInfo.profile_name.c_str());
-        setBufferPg(pg_key, portInfo.profile_name, true);
+        updateBufferPgToDb(pg_key, portInfo.profile_name, true);
 
         //TODO: recalculate pool size
         recalculateSharedBufferPool();
@@ -436,7 +496,7 @@ task_process_status BufferMgrDynamic::doRemovePgTask(string &pg_key)
 
     // Remove the PG from APPL_DB
     string null_str("");
-    setBufferPg(pg_key, null_str, false);
+    updateBufferPgToDb(pg_key, null_str, false);
 
     SWSS_LOG_NOTICE("Remove BUFFER_PG for %s to profile %s", pg_key.c_str(), portInfo.profile_name.c_str());
 
@@ -450,7 +510,7 @@ task_process_status BufferMgrDynamic::doRemovePgTask(string &pg_key)
 }
 
 // Update headroom override
-task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(string &pg_key, string &profile)
+task_process_status BufferMgrDynamic::doUpdateHeadroomOverrideTask(string &pg_key, string &profile)
 {
     string port = parseObjectNameFromKey(pg_key);
     auto portInfo = m_portInfoLookup[port];
@@ -466,7 +526,7 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(string &pg_key, 
     buffer_profile_t &pgProfile = searchRef->second;
 
     //check whether the accumulative headroom exceeds the limit
-    if (!isHeadroomResourceValid(port, pg_key, pgProfile))
+    if (!isHeadroomResourceValid(port, pgProfile, pg_key))
     {
         SWSS_LOG_ERROR("Unable to configure profile %s on %s, accumulative headroom size exceeds limit",
                        profile.c_str(), pg_key.c_str());
@@ -481,7 +541,7 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(string &pg_key, 
     }
 
     transformSeperator(pg_key);
-    setBufferPg(pg_key, profile, true);
+    updateBufferPgToDb(pg_key, profile, true);
 
     SWSS_LOG_NOTICE("Headroom override %s has been configured on %s", profile.c_str(), pg_key.c_str());
 
@@ -490,12 +550,69 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(string &pg_key, 
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::doRemoveStaticProfileTask(string &pg_key, string &profile)
+task_process_status BufferMgrDynamic::doRemoveHeadroomOverrideTask(string &pg_key, string &profile)
 {
     string port = parseObjectNameFromKey(pg_key);    
-    setBufferPg(pg_key, profile, false);
+    updateBufferPgToDb(pg_key, profile, false);
 
     SWSS_LOG_NOTICE("Headroom override %s has been removed on %s", profile.c_str(), pg_key.c_str());
+
+    recalculateSharedBufferPool();
+
+    return task_process_status::task_success;
+}
+
+task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(string &profileName, buffer_profile_t &profile)
+{
+    auto profileToMap = m_profileToPortMap[profileName];
+    map<string, bool> portsChecked;
+
+    for (auto i : profileToMap)
+    {
+        auto key = i.first;
+        auto port = parseObjectNameFromKey(key);
+
+        if (portsChecked[port])
+            continue;
+
+        if (isHeadroomResourceValid(port, profile))
+        {
+            SWSS_LOG_ERROR("BUFFER_PROFILE %s cannot be updated because %s referencing it violates the resource limitation",
+                           profileName.c_str(), key.c_str());
+            return task_process_status::task_failed;
+        }
+
+        portsChecked[port] = true;
+    }
+
+    string mode = getPgPoolMode();
+
+    if (mode.empty())
+    {
+        // this should never happen if switch initialized properly
+        SWSS_LOG_WARN("PG lossless pool is not yet created, updating profile %s failed", profileName.c_str());
+        return task_process_status::task_need_retry;
+    }
+
+    // profile threshold field name
+    mode += "_th";
+    string pg_pool_reference = string(APP_BUFFER_POOL_TABLE_NAME) +
+        m_applBufferProfileTable.getTableNameSeparator() +
+        INGRESS_LOSSLESS_PG_POOL_NAME;
+
+    vector<FieldValueTuple> fvVector;
+    fvVector.emplace_back(make_pair("pool", "[" + pg_pool_reference + "]"));
+    fvVector.emplace_back(make_pair("xon", profile.xon));
+    if (profile.xon_offset.empty()) {
+        fvVector.emplace_back(make_pair("xon_offset", profile.xon_offset));
+    }
+    fvVector.emplace_back(make_pair("xoff", profile.xoff));
+    fvVector.emplace_back(make_pair("size", profile.size));
+    fvVector.emplace_back(make_pair(mode, profile.threshold));
+
+    m_applBufferProfileTable.set(string(APP_BUFFER_PROFILE_TABLE_NAME) + ":" + profileName, fvVector);
+
+    m_bufferProfileLookup[profileName] = profile;
 
     recalculateSharedBufferPool();
 
@@ -688,7 +805,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
 
     transformSeperator(key);
     auto profileName = parseObjectNameFromKey(key);
-    buffer_profile_t &profileApp = m_bufferProfileLookup[profileName];
+    buffer_profile_t profileApp;
 
     SWSS_LOG_DEBUG("processing command:%s", op.c_str());
     if (op == SET_COMMAND)
@@ -746,6 +863,10 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
             if (field == buffer_headroom_type_field_name)
             {
                 profileApp.dynamic_calculated = (value == "dynamic");
+                if (profileApp.dynamic_calculated)
+                {
+                    profileApp.lossless = true;
+                }
             }
             fvVector.emplace_back(FieldValueTuple(field, value));
             SWSS_LOG_INFO("Inserting BUFFER_PROFILE table field %s value %s", field.c_str(), value.c_str());
@@ -753,12 +874,13 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         // don't insert dynamically calculated profiles into APPL_DB
         if (profileApp.dynamic_calculated)
         {
+            m_bufferProfileLookup[profileName] = profileApp;
             SWSS_LOG_NOTICE("Dynamically profile %s won't be deployed to APPL_DB until referenced by a port",
                             key.c_str());
         }
         else
         {
-            m_applBufferProfileTable.set(key, fvVector);
+            doUpdateStaticProfileTask(profileName, profileApp);
             SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been inserted into APPL_DB", key.c_str());
         }
     }
@@ -768,7 +890,16 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         // Check whether it is referenced by port. If yes, return "need retry" and exit
         // Typically, the referencing occurs when headroom override configured
         // Remove it from APPL_DB and internal cache
-        m_applBufferProfileTable.del(key);
+
+        if (m_profileToPortMap[profileName].size() > 0)
+        {
+            SWSS_LOG_WARN("BUFFER_PROFILE %s is referenced and cannot be removed for now", key.c_str());
+            return task_process_status::task_need_retry;
+        }
+        if (!profileApp.dynamic_calculated)
+        {
+            m_applBufferProfileTable.del(key);
+        }
         m_bufferProfileLookup.erase(profileName);
     }
     else
@@ -802,7 +933,7 @@ task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
         // 3. Check whether the profile is ingress or egress
         // 4. Initialize "profile_name" of buffer_pg_t
 
-        bufferPg.dynamic_calculated = false;
+        bufferPg.dynamic_calculated = true;
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
             string &field = fvField(*i);
@@ -844,7 +975,7 @@ task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
             else
             {
                 // Headroom override
-                doUpdateStaticProfileTask(key, bufferPg.profile_name);
+                doUpdateHeadroomOverrideTask(key, bufferPg.profile_name);
             }
         }
         else
@@ -877,7 +1008,7 @@ task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
             else
             {
                 // Headroom override
-                doRemoveStaticProfileTask(key, bufferPg.profile_name);
+                doRemoveHeadroomOverrideTask(key, bufferPg.profile_name);
             }
         }
         else
