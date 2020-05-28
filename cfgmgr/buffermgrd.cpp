@@ -11,11 +11,13 @@
 #include <fstream>
 #include <iostream>
 #include "json.h"
+#include "json.hpp"
 
 using namespace std;
 using namespace swss;
+using json = nlohmann::json;
 
-/* select() function timeout retry time, in millisecond */
+/* SELECT() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 
 /*
@@ -42,12 +44,47 @@ void usage()
     cout << "       values: 'speed, cable, size, xon,  xoff, dynamic_threshold, xon_offset'" << endl;
 }
 
-void test_json(std::string json)
+void dump_db_item(KeyOpFieldsValuesTuple &db_item)
 {
-    std::vector<FieldValueTuple> table;
-    JSon::readJson(json, table);
-    for (auto i : table)
-        cout << "field" << fvField(i) << "value" << fvValue(i) << endl;
+    SWSS_LOG_DEBUG("db_item: [");
+    SWSS_LOG_DEBUG("\toperation: %s", kfvOp(db_item).c_str());
+    SWSS_LOG_DEBUG("\thash: %s", kfvKey(db_item).c_str());
+    SWSS_LOG_DEBUG("\tfields: [");
+    for (auto fv: kfvFieldsValues(db_item))
+        SWSS_LOG_DEBUG("\t\tfield: %s value: %s", fvField(fv).c_str(), fvValue(fv).c_str());
+    SWSS_LOG_DEBUG("\t]");
+    SWSS_LOG_DEBUG("]");
+}
+
+bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
+{
+    DBConnector db("STATE_DB", 0, true);
+    for (auto &db_item : db_items)
+    {
+        dump_db_item(db_item);
+
+        string key = kfvKey(db_item);
+        size_t pos = key.find(":");
+        if ((string::npos == pos) || ((key.size() - 1) == pos))
+        {
+            SWSS_LOG_ERROR("Invalid formatted hash:%s\n", key.c_str());
+            return false;
+        }
+        string table_name = key.substr(0, pos);
+        string key_name = key.substr(pos + 1);
+        Table stateTable(&db, table_name);
+
+        stateTable.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
+    }
+    return true;
+}
+
+void load_json(string file)
+{
+    ifstream json(file);
+    vector<KeyOpFieldsValuesTuple> db_items;
+    JSon::loadJsonFromFile(json, db_items);
+    write_db_data(db_items);
 }
 
 int main(int argc, char **argv)
@@ -79,10 +116,11 @@ int main(int argc, char **argv)
             peripherial_table_file = optarg;
             break;
         case 'j':
-            json_file = optarg;
-            std::cout << "jsonfile: " << json_file << endl;
-            test_json(json_file);
+        {
+            string json_file = optarg;
+            load_json(json_file);
             return 0;
+        }
         default: /* '?' */
             usage();
             return EXIT_FAILURE;
@@ -92,16 +130,6 @@ int main(int argc, char **argv)
     try
     {
         std::vector<Orch *> cfgOrchList;
-        vector<string> cfg_buffer_tables = {
-            CFG_PORT_TABLE_NAME,
-            CFG_PORT_CABLE_LEN_TABLE_NAME,
-            CFG_BUFFER_POOL_TABLE_NAME,
-            CFG_BUFFER_PROFILE_TABLE_NAME,
-            CFG_BUFFER_PG_TABLE_NAME,
-            CFG_BUFFER_QUEUE_TABLE_NAME,
-            CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
-            CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
-        };
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
@@ -109,16 +137,40 @@ int main(int argc, char **argv)
 
         if (!pg_lookup_file.empty())
         {
+            vector<string> cfg_buffer_tables = {
+                CFG_PORT_TABLE_NAME,
+                CFG_PORT_CABLE_LEN_TABLE_NAME,
+                CFG_BUFFER_POOL_TABLE_NAME,
+                CFG_BUFFER_PROFILE_TABLE_NAME,
+                CFG_BUFFER_PG_TABLE_NAME,
+                CFG_BUFFER_QUEUE_TABLE_NAME,
+                CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+                CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
+            };
             cfgOrchList.emplace_back(new BufferMgr(&cfgDb, &stateDb, &applDb, pg_lookup_file, cfg_buffer_tables));
         }
         else if (!switch_table_file.empty())
         {
+            vector<TableConnector> buffer_table_connectors = {
+                TableConnector(&cfgDb, CFG_PORT_TABLE_NAME),
+                TableConnector(&cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
+                TableConnector(&cfgDb, CFG_BUFFER_POOL_TABLE_NAME),
+                TableConnector(&cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME),
+                TableConnector(&cfgDb, CFG_BUFFER_PG_TABLE_NAME),
+                TableConnector(&cfgDb, CFG_BUFFER_QUEUE_TABLE_NAME),
+                TableConnector(&cfgDb, CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME),
+                TableConnector(&cfgDb, CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME),
+                TableConnector(&cfgDb, CFG_DEFAULT_LOSSLESS_BUFFER_PARAMETER),
+                TableConnector(&stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
+            };
             // Load the json file containing the SWITCH_TABLE
+            load_json(switch_table_file);
+
             if (!peripherial_table_file.empty())
             {
                 //Load the json file containing the PERIPHERIAL_TABLE
             }
-            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, pg_lookup_file, cfg_buffer_tables));
+            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, buffer_table_connectors));
         }
         else
         {

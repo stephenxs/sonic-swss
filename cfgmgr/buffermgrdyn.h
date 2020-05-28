@@ -6,6 +6,7 @@
 #include "orch.h"
 
 #include <map>
+#include <set>
 #include <string>
 
 namespace swss {
@@ -36,7 +37,6 @@ typedef struct {
 } buffer_profile_t;
 
 typedef struct {
-    bool ingress;
     bool lossless;
     bool dynamic_calculated;
     std::string profile_name;
@@ -63,7 +63,8 @@ typedef std::map<std::string, buffer_profile_t> buffer_profile_lookup_t;
 //map from name to pool
 typedef std::map<std::string, buffer_pool_t> buffer_pool_lookup_t;
 //profile reference table
-typedef std::map<std::string, std::map<std::string, bool>> profile_port_lookup_t;
+typedef std::set<std::string> port_pg_set_t;
+typedef std::map<std::string, port_pg_set_t> profile_port_lookup_t;
 //port -> headroom override
 typedef std::map<std::string, buffer_profile_t> headroom_override_t;
 //map from pg to info
@@ -74,7 +75,7 @@ typedef std::map<std::string, buffer_pg_lookup_t> port_pg_lookup_t;
 class BufferMgrDynamic : public Orch
 {
 public:
-    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, std::string pg_lookup_file, const std::vector<std::string> &tableNames);
+    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables);
     using Orch::doTask;
 
 private:
@@ -84,6 +85,8 @@ private:
 
     buffer_table_handler_map m_bufferTableHandlerMap;
 
+    bool m_fullStart;
+
     std::shared_ptr<DBConnector> m_applDb = nullptr;
 
     // CONFIG_DB tables
@@ -92,6 +95,10 @@ private:
     Table m_cfgBufferProfileTable;
     Table m_cfgBufferPgTable;
     Table m_cfgLosslessPgPoolTable;
+    Table m_cfgDefaultLosslessBufferParam;
+
+    // STATE_DB tables
+    Table m_stateBufferMaximumTable;
 
     // APPL_DB tables
     ProducerStateTable m_applBufferProfileTable;
@@ -109,6 +116,9 @@ private:
     // 2. Dynamically calculated headroom info stored in APPL_BUFFER_PROFILE
     // key: profile name
     buffer_profile_lookup_t m_bufferProfileLookup;
+    // A set where the ignored profiles are stored.
+    // A PG that reference an ignored profile should also be ignored.
+    std::set<std::string> m_bufferProfileIgnored;
     // m_portInfoLookup
     // key: port name
     // updated only when a port's speed and cable length updated
@@ -128,37 +138,47 @@ private:
     std::string m_headroomSha;
     std::string m_bufferpoolSha;
 
+    // Parameters for headroom generation
+    std::string m_mmuSize;
+    std::string m_defaultThreshold;
+    // Default reserved size for ingress profile
+    // Vendor can chose not to provide it. In that case the size will be the sum of xon and xoff
+    std::string m_defaultReservedSize;
+
     // Initializers
-    void InitTableHandlerMap();
+    void InitTableHandlerMapFirstStage();
+    void InitTableHandlerMapFull();
 
     // Tool functions to parse keys and references
     std::string getPgPoolMode();
     void transformSeperator(std::string &name);
-    std::string parseObjectNameFromKey(std::string &key, size_t pos/* = 1*/);
-    std::string parseObjectNameFromReference(std::string &reference);
+    std::string parseObjectNameFromKey(const std::string &key, size_t pos/* = 1*/);
+    std::string parseObjectNameFromReference(const std::string &reference);
 
     // APPL_DB table operations
-    void updateBufferPoolToDb(std::string &name, buffer_pool_t &pool);
-    void updateBufferProfileToDb(std::string &name, buffer_profile_t &profile);
-    void updateBufferPgToDb(std::string &key, std::string &profile, bool add);
+    void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
+    void updateBufferProfileToDb(const std::string &name, const buffer_profile_t &profile);
+    void updateBufferPgToDb(const std::string &key, const std::string &profile, bool add);
 
     // Meta flows
-    void calculateHeadroomSize(std::string &speed, std::string &cable, std::string &gearbox_model, buffer_profile_t &headroom);
+    void calculateHeadroomSize(const std::string &speed, const std::string &cable, const std::string &gearbox_model, buffer_profile_t &headroom);
     void recalculateSharedBufferPool();
-    task_process_status allocateProfile(std::string &speed, std::string &cable, std::string &gearbox_model, std::string &profile_name, buffer_profile_t &headroom);
-    void releaseProfile(std::string &speed, std::string &cable_length, std::string &gearbox_model);
-    bool isHeadroomResourceValid(std::string &port, buffer_profile_t &profile_info, std::string lossy_pg_changed);
+    task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &gearbox_model, std::string &profile_name);
+    void releaseProfile(const std::string &profile_name);
+    bool isHeadroomResourceValid(const std::string &port, buffer_profile_t &profile_info, std::string lossy_pg_changed);
 
     // Main flows
-    task_process_status doSpeedOrCableLengthUpdateTask(std::string &port, std::string &speed, std::string &cable_length);
-    task_process_status doUpdatePgTask(std::string &pg_key, std::string &profile);
-    task_process_status doRemovePgTask(std::string &pg_key);
-    task_process_status doUpdateHeadroomOverrideTask(std::string &pg_key, std::string &profile);
-    task_process_status doRemoveHeadroomOverrideTask(std::string &pg_key, std::string &profile);
-    task_process_status doAdminStatusTask(std::string port, std::string adminStatus);
-    task_process_status doUpdateStaticProfileTask(std::string &profileName, buffer_profile_t &profile);
+    task_process_status doSpeedOrCableLengthUpdateTask(const std::string &port, const std::string &speed, const std::string &cable_length);
+    task_process_status doUpdatePgTask(const std::string &pg_key, const std::string &profile);
+    task_process_status doRemovePgTask(const std::string &pg_key);
+    task_process_status doUpdateHeadroomOverrideTask(const std::string &pg_key, const std::string &profile);
+    task_process_status doRemoveHeadroomOverrideTask(const std::string &pg_key, const std::string &profile);
+    task_process_status doAdminStatusTask(const std::string port, const std::string adminStatus);
+    task_process_status doUpdateStaticProfileTask(const std::string &profileName, buffer_profile_t &profile);
 
     // Table update handlers
+    task_process_status handleBufferMaxParam(Consumer &consumer);
+    task_process_status handleDefaultLossLessBufferParam(Consumer &consumer);
     task_process_status handleCableLenTable(Consumer &consumer);
     task_process_status handlePortTable(Consumer &consumer);
     task_process_status handleBufferPoolTable(Consumer &consumer);
