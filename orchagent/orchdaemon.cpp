@@ -166,7 +166,7 @@ bool OrchDaemon::init()
         APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
         APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
     };
-    gBufferOrch = new BufferOrch(m_applDb, buffer_tables);
+    gBufferOrch = new BufferOrch(m_applDb, m_stateDb, buffer_tables);
 
     PolicerOrch *policer_orch = new PolicerOrch(m_configDb, "POLICER");
 

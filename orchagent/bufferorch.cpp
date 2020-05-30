@@ -34,32 +34,36 @@ type_map BufferOrch::m_buffer_type_maps = {
     {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()}
 };
 
-BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) :
-    Orch(db, tableNames),
+BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *stateDb, vector<string> &tableNames) :
+    Orch(applDb, tableNames),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
-    m_countersDbRedisClient(m_countersDb.get())
-{
-    SWSS_LOG_ENTER();
-    initTableHandlers();
-    initBufferReadyLists(db);
-    initFlexCounterGroupTable();
-};
-
-BufferOrch::BufferOrch(DBConnector *applDb, vector<TableConnector> &tableConnectors) :
-    Orch(tableConnectors),
-    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
-    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
-    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
-    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
-    m_countersDbRedisClient(m_countersDb.get())
+    m_countersDbRedisClient(m_countersDb.get()),
+    m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
     initBufferReadyLists(applDb);
     initFlexCounterGroupTable();
+    initBufferConstants();
+};
+
+BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *stateDb, vector<TableConnector> &tableConnectors) :
+    Orch(tableConnectors),
+    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
+    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
+    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
+    m_countersDbRedisClient(m_countersDb.get()),
+    m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
+{
+    SWSS_LOG_ENTER();
+    initTableHandlers();
+    initBufferReadyLists(applDb);
+    initFlexCounterGroupTable();
+    initBufferConstants();
 };
 
 void BufferOrch::initTableHandlers()
@@ -110,6 +114,35 @@ void BufferOrch::initBufferReadyList(Table& table)
             m_port_ready_list_ref[port_name].push_back(key);
         }
     }
+}
+
+void BufferOrch::initBufferConstants()
+{
+    sai_status_t status;
+    sai_attribute_t attr;
+
+    attr.id = SAI_SWITCH_ATTR_TOTAL_BUFFER_SIZE;
+
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get Maxiuum memory size, rv:%d", status);
+        // This is not a mandatory attribute so in case of failure we just return
+        return;
+    }
+
+    vector<string> keys;
+    vector<FieldValueTuple> fvVector;
+    m_stateBufferMaximumValueTable.getKeys(keys);
+    if (keys.size() > 1)
+    {
+        SWSS_LOG_ERROR("Multiple entries in %s table, taking the first one", STATE_BUFFER_MAXIMUM_VALUE_TABLE);
+    }
+
+    fvVector.emplace_back(make_pair("mmu_size", to_string(attr.value.u64 * 1024)));
+    m_stateBufferMaximumValueTable.set(keys[0], fvVector);
+    SWSS_LOG_NOTICE("Got maximum memory size %lu, exposing to %s|%s",
+                    attr.value.u64, STATE_BUFFER_MAXIMUM_VALUE_TABLE, keys[0].c_str());
 }
 
 void BufferOrch::initFlexCounterGroupTable(void)

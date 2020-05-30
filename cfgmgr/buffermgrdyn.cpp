@@ -25,7 +25,7 @@
 using namespace std;
 using namespace swss;
 
-BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const vector<TableConnector> &tables) :
+BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const vector<TableConnector> &tables, shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo = nullptr) :
         Orch(tables),
         m_applDb(applDb),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
@@ -40,12 +40,16 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_applBufferQueueTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME),
         m_applBufferIngressProfileListTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME),
         m_applBufferEgressProfileListTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME),
-        m_stateBufferMaximumTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
+        m_stateBufferMaximumTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
+        m_stateBufferPoolTable(stateDb, STATE_BUFFER_POOL_TABLE_NAME),
+        m_stateBufferProfileTable(stateDb, STATE_BUFFER_PROFILE_TABLE_NAME),
+        m_fullStart(false)
 {
     SWSS_LOG_ENTER();
 
     // Initialize the handler map
-    InitTableHandlerMapFirstStage();
+    initTableHandlerMapFirstStage();
+    parseGearboxInfo(gearboxInfo);
     m_fullStart = false;
 
     string platform = getenv("platform") ? getenv("platform") : "";
@@ -58,18 +62,18 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     string headroomSha, bufferpoolSha;
     string headroomPluginName = "buffer_headroom_" + platform + ".lua";
     string bufferpoolPluginName = "buffer_pool_" + platform + ".lua";
+    string checkHeadroomPluginName = "buffer_check_headroom_" + platform + ".lua";
 
     try
     {
         string headroomLuaScript = swss::loadLuaScript(headroomPluginName);
-        m_headroomSha = swss::loadRedisScript(
-                applDb,
-                headroomLuaScript);
+        m_headroomSha = swss::loadRedisScript(applDb, headroomLuaScript);
 
         string bufferpoolLuaScript = swss::loadLuaScript(bufferpoolPluginName);
-        m_bufferpoolSha = swss::loadRedisScript(
-                applDb,
-                bufferpoolLuaScript);
+        m_bufferpoolSha = swss::loadRedisScript(applDb, bufferpoolLuaScript);
+
+        string checkHeadroomLuaScript = swss::loadLuaScript(checkHeadroomPluginName);
+        m_checkHeadroomSha = swss::loadRedisScript(applDb, checkHeadroomLuaScript);
     }
     catch (...)
     {
@@ -83,12 +87,61 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     //Post: ASIC_TABLE and PERIPHERIAL_TABLE has been initialized
 }
 
-void BufferMgrDynamic::InitTableHandlerMapFirstStage()
+void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo)
+{
+    if (nullptr == gearboxInfo)
+    {
+        m_supportGearbox = false;
+    }
+    else
+    {
+        for (auto &kfv : *gearboxInfo)
+        {
+            auto table = parseObjectNameFromKey(kfvKey(kfv), 0);
+            auto key = parseObjectNameFromKey(kfvKey(kfv), 1);
+
+            if (table == STATE_PERIPHERAL_TABLE)
+            {
+                for (auto &fv: kfvFieldsValues(kfv))
+                {
+                    auto &field = fvField(fv);
+                    auto &value = fvValue(fv);
+                    SWSS_LOG_DEBUG("Processing table %s field:%s, value:%s", table.c_str(), field.c_str(), value.c_str());
+                    if (field == "gearbox_delay")
+                        m_gearboxDelay[key] = value;
+                }
+            }
+
+            if (table == STATE_PORT_PERIPHERAL_TABLE)
+            {
+                if (key != "global")
+                {
+                    SWSS_LOG_ERROR("Port peripheral table: only global gearbox model is supported but got %s", key.c_str());
+                    continue;
+                }
+
+                for (auto &fv: kfvFieldsValues(kfv))
+                {
+                    auto &field = fvField(fv);
+                    auto &value = fvValue(fv);
+                    SWSS_LOG_DEBUG("Processing table %s field:%s, value:%s", table.c_str(), field.c_str(), value.c_str());
+                    if (fvField(fv) == "gearbox_model")
+                        m_identifyGearboxModel = fvValue(fv);
+                }
+            }
+        }
+
+        m_identifyGearboxDelay = m_gearboxDelay[m_identifyGearboxModel];
+        m_supportGearbox = false;
+    }
+}
+
+void BufferMgrDynamic::initTableHandlerMapFirstStage()
 {
     m_bufferTableHandlerMap.insert(buffer_handler_pair(STATE_BUFFER_MAXIMUM_VALUE_TABLE, &BufferMgrDynamic::handleBufferMaxParam));
 }
 
-void BufferMgrDynamic::InitTableHandlerMapFull()
+void BufferMgrDynamic::initTableHandlerMapFull()
 {
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_DEFAULT_LOSSLESS_BUFFER_PARAMETER, &BufferMgrDynamic::handleDefaultLossLessBufferParam));
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_POOL_TABLE_NAME, &BufferMgrDynamic::handleBufferPoolTable));
@@ -99,6 +152,8 @@ void BufferMgrDynamic::InitTableHandlerMapFull()
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferMgrDynamic::handleBufferPortEgressProfileListTable));
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_PORT_TABLE_NAME, &BufferMgrDynamic::handlePortTable));
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_PORT_CABLE_LEN_TABLE_NAME, &BufferMgrDynamic::handleCableLenTable));
+
+    m_fullStart = true;
 }
 
 // APIs to handle variant kinds of keys
@@ -144,7 +199,7 @@ void BufferMgrDynamic::calculateHeadroomSize(const string &speed, const string &
     keys.emplace_back(headroom.name);
     argv.emplace_back(speed);
     argv.emplace_back(cable);
-    argv.emplace_back("0");
+    argv.emplace_back(m_identifyGearboxDelay);
 
     try
     {
@@ -218,6 +273,8 @@ void BufferMgrDynamic::updateBufferPoolToDb(const string &name, const buffer_poo
     fvVector.emplace_back(make_pair("size", pool.total_size));
 
     m_applBufferPoolTable.set(name, fvVector);
+
+    m_stateBufferPoolTable.set(name, fvVector);
 }
 
 void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_profile_t &profile)
@@ -248,6 +305,8 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
     fvVector.emplace_back(make_pair(mode, profile.threshold));
 
     m_applBufferProfileTable.set(name, fvVector);
+
+    m_stateBufferProfileTable.set(name, fvVector);
 }
 
 // Database operation
@@ -316,7 +375,7 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
 
         SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been created successfully", buffer_profile_key.c_str());
         SWSS_LOG_DEBUG("New profile created %s according to (%s %s %s): xon %s xoff %s size %s",
-                       profile_name.c_str(),
+                       buffer_profile_key.c_str(),
                        speed.c_str(), cable.c_str(), gearbox_model.c_str(),
                        profile.xon.c_str(), profile.xoff.c_str(), profile.size.c_str());
     }
@@ -362,6 +421,8 @@ void BufferMgrDynamic::releaseProfile(const string &profile_name)
 
     m_applBufferProfileTable.del(profile_name);
 
+    m_stateBufferProfileTable.del(profile_name);
+
     // Remove the profile from the internal cache
     m_bufferProfileLookup.erase(profile_name);
 
@@ -382,7 +443,36 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, buffer_profil
     // for each pg in m_portPgLookup[port] do
     //     if pg is lossless or pg == lossy_pg_changed, take profile_info
     //     else take m_bufferProfileLookup[pg.profile_name]
-    SWSS_LOG_ERROR("Unable to update profile for port %s. Accumulative headroom size exceeds limit", port.c_str());
+
+    vector<string> keys = {port};
+    vector<string> argv = {};
+
+    try
+    {
+        auto ret = runRedisScript(*m_applDb, m_checkHeadroomSha, keys, argv);
+
+        // The format of the result:
+        // a list of strings containing key, value pairs with colon as separator
+        // each is the size of a buffer pool
+
+        for ( auto i : ret)
+        {
+            auto pairs = tokenize(i, ':');
+            if ("result" != pairs[0])
+                continue;
+
+            if ("true" != pairs[1])
+            {
+                SWSS_LOG_ERROR("Unable to update profile for port %s. Accumulative headroom size exceeds limit", port.c_str());
+                return false;
+            }
+        }
+    }
+    catch (...)
+    {
+        SWSS_LOG_WARN("Lua scripts for buffer calculation were not executed successfully");
+    }
+
     return true;
 }
 
@@ -406,6 +496,7 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(const strin
     {
         old_cable = portInfo.cable_length;
         old_speed = portInfo.speed;
+        portInfo.profile_name = "";
     }
 
     // Iterate all the lossless PGs configured on this port
@@ -448,6 +539,9 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(const strin
             m_profileToPortMap[oldProfile].erase(key);
             m_profileToPortMap[newProfile].insert(key);
             SWSS_LOG_DEBUG("Move profile reference for %s from [%s] to [%s]", key.c_str(), oldProfile.c_str(), newProfile.c_str());
+
+            // buffer pg needs to be updated as well
+            portPg.profile_name = newProfile;
         }
 
         //appl_db Database operation: set item BUFFER_PG|<port>|<pg>
@@ -458,10 +552,6 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(const strin
     if (isHeadroomUpdated)
     {
         recalculateSharedBufferPool();
-
-        //Remove the old profile which is probably not referenced anymore.
-        if (!oldProfile.empty() && oldProfile != newProfile)
-            releaseProfile(oldProfile);
 
         //update internal map
         portInfo.speed = speed;
@@ -474,6 +564,10 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(const strin
         SWSS_LOG_DEBUG("Nothing to do for port %s since no PG configured on it", port.c_str());
     }
 
+    //Remove the old profile which is probably not referenced anymore.
+    if (!oldProfile.empty() && oldProfile != newProfile)
+        releaseProfile(oldProfile);
+
     return task_process_status::task_success;
 }
 
@@ -482,7 +576,7 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(const strin
 // Update lossless pg on a port after an PG has been installed on the port
 // Called when pg updated from CONFIG_DB
 // Key format: BUFFER_PG:<port>:<pg>
-task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const string &profile)
+task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, string &profile)
 {
     auto port = parseObjectNameFromKey(pg_key);
     string value;
@@ -530,6 +624,8 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
         }
     }
 
+    profile = portInfo.profile_name;
+
     return task_process_status::task_success;
 }
 
@@ -557,7 +653,7 @@ task_process_status BufferMgrDynamic::doUpdateHeadroomOverrideTask(const string 
 {
     string port = parseObjectNameFromKey(pg_key);
     auto &portInfo = m_portInfoLookup[port];
-    auto &pgLookup = m_portPgLookup[port];
+    const auto &pgLookup = m_portPgLookup[port];
 
     auto searchRef = m_bufferProfileLookup.find(profile);
     if (searchRef == m_bufferProfileLookup.end())
@@ -617,7 +713,7 @@ task_process_status BufferMgrDynamic::doUpdateHeadroomOverrideTask(const string 
 task_process_status BufferMgrDynamic::doRemoveHeadroomOverrideTask(const string &pg_key, const string &profile)
 {
     string port = parseObjectNameFromKey(pg_key);    
-    buffer_pg_lookup_t &pgLookup = m_portPgLookup[port];
+    const buffer_pg_lookup_t &pgLookup = m_portPgLookup[port];
     bool noLossless = true;
 
     updateBufferPgToDb(pg_key, profile, false);
@@ -695,8 +791,7 @@ task_process_status BufferMgrDynamic::handleBufferMaxParam(Consumer &consumer)
             {
                 m_mmuSize = fvValue(i);
                 SWSS_LOG_DEBUG("Handling Default Lossless Buffer Param table field mmu_size %s", m_mmuSize.c_str());
-                InitTableHandlerMapFull();
-                m_fullStart = true;
+                initTableHandlerMapFull();
             }
         }
     }
@@ -1221,12 +1316,12 @@ task_process_status BufferMgrDynamic::handleBufferQueueTable(Consumer &consumer)
 
 task_process_status BufferMgrDynamic::handleBufferPortIngressProfileListTable(Consumer &consumer)
 {
-    return doBufferTableTask(consumer, m_applBufferEgressProfileListTable);
+    return doBufferTableTask(consumer, m_applBufferIngressProfileListTable);
 }
 
 task_process_status BufferMgrDynamic::handleBufferPortEgressProfileListTable(Consumer &consumer)
 {
-    return doBufferTableTask(consumer, m_applBufferIngressProfileListTable);
+    return doBufferTableTask(consumer, m_applBufferEgressProfileListTable);
 }
 
 /*

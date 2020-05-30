@@ -6,14 +6,14 @@ local config_db = "4"
 local state_db = "6"
 
 local lossypg_reserved = 18 * 1024
-local egress_perport_reserve = 9 * 1024
+-- local egress_perport_reserve = 9 * 1024
 
 local result = {}
 local profiles = {}
 
 local count_shutdown_port = 0
 local num_ports = 0
-local mmu_size = tonumber(ARGV[1])
+local debug = tonumber(ARGV[1])
 
 local function find_profile(ref)
     -- Remove the surrounding square bracket and the find in the list
@@ -37,28 +37,30 @@ local function iterate_all_items(all_items)
     for i = 1, #all_items, 1 do
         -- Check whether the port on which pg or tc hosts is admin down
         port = string.match(all_items[i], "Ethernet%d+")
-        if prev_port ~= port then
-            status = redis.call('HGET', 'PORT_TABLE:'..port, 'admin_status')
-            prev_port = port
-            if status == "down" then
-                is_up = false
-            else
-                is_up = true
+        if port ~= nil then
+            if prev_port ~= port then
+                status = redis.call('HGET', 'PORT_TABLE:'..port, 'admin_status')
+                prev_port = port
+                if status == "down" then
+                    is_up = false
+                else
+                    is_up = true
+                end
             end
-        end
-        if is_up == true then
-            local range = string.match(all_items[i], "Ethernet%d+:([^%s]+)$")
-            local profile = redis.call('HGET', all_items[i], 'profile')
-            local index = find_profile(profile)
-            local size
-            if string.len(range) == 1 then
-                size = 1
+            if is_up == true then
+                local range = string.match(all_items[i], "Ethernet%d+:([^%s]+)$")
+                local profile = redis.call('HGET', all_items[i], 'profile')
+                local index = find_profile(profile)
+                local size
+                if string.len(range) == 1 then
+                    size = 1
+                else
+                    size = 1 + tonumber(string.sub(range, -1)) - tonumber(string.sub(range, 1, 1))
+                end
+                profiles[index][2] = profiles[index][2] + size
             else
-                size = 1 + tonumber(string.sub(range, -1)) - tonumber(string.sub(range, 1, 1))
+                admin_down_ports = admin_down_ports + 1
             end
-            profiles[index][2] = profiles[index][2] + size
-        else
-            admin_down_ports = admin_down_ports + 1
         end
     end
     return admin_down_ports
@@ -83,12 +85,16 @@ iterate_all_items(all_tcs)
 -- Fetch sizes of all of the profiles, accumulate them
 local accumulative_occupied_buffer = 0
 for i = 1, #profiles, 1 do
-    local size = tonumber(redis.call('HGET', profiles[i][1], 'size'))
-    if profiles[i][1] == "BUFFER_PROFILE:ingress_lossy_profile" then
-        size = size + lossypg_reserved
-    end
-    if size ~= nil then 
-        accumulative_occupied_buffer = accumulative_occupied_buffer + size * profiles[i][2]
+    if profiles[i][1] ~= "BUFFER_PROFILE_KEY_SET" and profiles[i][1] ~= "BUFFER_PROFILE_DEL_SET" then
+        local size = tonumber(redis.call('HGET', profiles[i][1], 'size'))
+        if size ~= nil then 
+            if profiles[i][1] == "BUFFER_PROFILE:ingress_lossy_profile" then
+                size = size + lossypg_reserved
+            end
+            if size ~= 0 then
+                accumulative_occupied_buffer = accumulative_occupied_buffer + size * profiles[i][2]
+            end
+        end
     end
 end
 
@@ -103,7 +109,7 @@ redis.call('SELECT', config_db)
 local ports_table = redis.call('KEYS', 'PORT|*')
 local num_ports = #ports_table
 
-accumulative_occupied_buffer = accumulative_occupied_buffer + egress_perport_reserve * (num_ports - count_shutdown_port)
+-- accumulative_occupied_buffer = accumulative_occupied_buffer + egress_perport_reserve * (num_ports - count_shutdown_port)
 mmu_size = mmu_size - accumulative_occupied_buffer
 
 -- Fetch all the pools that need update
@@ -134,7 +140,13 @@ else
 end
 
 for i = 1, #pools_need_update, 1 do
-    table.insert(result, pools_need_update[i] .. ":" .. math.ceil(pool_size))
+    local pool_name = string.match(pools_need_update[i], "BUFFER_POOL|([^%s]+)$")
+    table.insert(result, pool_name .. ":" .. math.ceil(pool_size))
+end
+
+if debug ~= nil then
+    table.insert(result, "total memory" .. ":" .. mmu_size)
+    table.insert(result, "accumulative reserved" .. ":" .. accumulative_occupied_buffer)
 end
 
 return result

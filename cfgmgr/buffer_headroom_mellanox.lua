@@ -66,6 +66,12 @@ for i = 1, #lossless_traffic_table_content, 2 do
     end
 end
 
+-- Fetch DEFAULT_LOSSLESS_BUFFER_PARAMETER from CONFIG_DB
+local lossless_traffic_keys = redis.call('KEYS', 'DEFAULT_LOSSLESS_BUFFER_PARAMETER*')
+
+-- Only one key should exist
+local default_threshold = redis.call('HGET', lossless_traffic_keys[1], 'default_dynamic_th')
+
 -- Calculate the headroom information
 local speed_of_light = 198000000
 local minimal_packet_size = 64
@@ -111,6 +117,7 @@ headroom_size = xoff_value + xon_value + speed_overhead
 
 table.insert(ret, "xon" .. ":" .. math.ceil(xon_value))
 table.insert(ret, "xoff" .. ":" .. math.ceil(xoff_value))
-table.insert(ret, "headroom" .. ":" .. math.ceil(headroom_size))
+table.insert(ret, "size" .. ":" .. math.ceil(headroom_size))
+table.insert(ret, "threshold" .. ":" .. default_threshold)
 
 return ret
