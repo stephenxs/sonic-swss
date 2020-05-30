@@ -71,11 +71,13 @@ typedef std::map<std::string, buffer_profile_t> headroom_override_t;
 typedef std::map<std::string, buffer_pg_t> buffer_pg_lookup_t;
 //map from port to all its pgs
 typedef std::map<std::string, buffer_pg_lookup_t> port_pg_lookup_t;
+//map from gearbox model to gearbox delay
+typedef std::map<std::string, std::string> gearbox_delay_t;
 
 class BufferMgrDynamic : public Orch
 {
 public:
-    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables);
+    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
     using Orch::doTask;
 
 private:
@@ -99,6 +101,8 @@ private:
 
     // STATE_DB tables
     Table m_stateBufferMaximumTable;
+    Table m_stateBufferPoolTable;
+    Table m_stateBufferProfileTable;
 
     // APPL_DB tables
     ProducerStateTable m_applBufferProfileTable;
@@ -130,13 +134,22 @@ private:
     profile_port_lookup_t m_profileToPortMap;
     // m_portPgLookup - the cache for CFG_BUFFER_PG and APPL_BUFFER_PG
     // 1st level key: port name, 2nd level key: PGs
+    // Updated in:
+    // 1. handleBufferPgTable, update from database
+    // 2. doSpeedOrCableLengthUpdateTask, speed/cable length updated
     port_pg_lookup_t m_portPgLookup;
+
+    bool m_supportGearbox;
+    gearbox_delay_t m_gearboxDelay;
+    std::string m_identifyGearboxModel;
+    std::string m_identifyGearboxDelay;
 
     // Vendor specific lua plugins for calculating headroom and buffer pool
     // Loaded when the buffer manager starts
     // Executed whenever the headroom and pool size need to be updated
     std::string m_headroomSha;
     std::string m_bufferpoolSha;
+    std::string m_checkHeadroomSha;
 
     // Parameters for headroom generation
     std::string m_mmuSize;
@@ -146,8 +159,9 @@ private:
     std::string m_defaultReservedSize;
 
     // Initializers
-    void InitTableHandlerMapFirstStage();
-    void InitTableHandlerMapFull();
+    void initTableHandlerMapFirstStage();
+    void initTableHandlerMapFull();
+    void parseGearboxInfo(std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
 
     // Tool functions to parse keys and references
     std::string getPgPoolMode();
@@ -169,7 +183,7 @@ private:
 
     // Main flows
     task_process_status doSpeedOrCableLengthUpdateTask(const std::string &port, const std::string &speed, const std::string &cable_length);
-    task_process_status doUpdatePgTask(const std::string &pg_key, const std::string &profile);
+    task_process_status doUpdatePgTask(const std::string &pg_key, std::string &profile);
     task_process_status doRemovePgTask(const std::string &pg_key);
     task_process_status doUpdateHeadroomOverrideTask(const std::string &pg_key, const std::string &profile);
     task_process_status doRemoveHeadroomOverrideTask(const std::string &pg_key, const std::string &profile);

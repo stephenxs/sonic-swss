@@ -56,9 +56,10 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
     SWSS_LOG_DEBUG("]");
 }
 
-bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
+void write_to_state_db(shared_ptr<vector<KeyOpFieldsValuesTuple>> db_items_ptr)
 {
     DBConnector db("STATE_DB", 0, true);
+    auto &db_items = *db_items_ptr;
     for (auto &db_item : db_items)
     {
         dump_db_item(db_item);
@@ -68,7 +69,7 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         if ((string::npos == pos) || ((key.size() - 1) == pos))
         {
             SWSS_LOG_ERROR("Invalid formatted hash:%s\n", key.c_str());
-            return false;
+            return;
         }
         string table_name = key.substr(0, pos);
         string key_name = key.substr(pos + 1);
@@ -76,15 +77,20 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
 
         stateTable.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
     }
-    return true;
 }
 
-void load_json(string file)
+shared_ptr<vector<KeyOpFieldsValuesTuple>> load_json(string file)
 {
     ifstream json(file);
-    vector<KeyOpFieldsValuesTuple> db_items;
-    JSon::loadJsonFromFile(json, db_items);
-    write_db_data(db_items);
+    auto db_items_ptr = make_shared<vector<KeyOpFieldsValuesTuple>>();
+    if (nullptr == db_items_ptr)
+    {
+        SWSS_LOG_ERROR("Unable to allocate memory when parsing %s", file.c_str());
+        abort();
+    }
+    JSon::loadJsonFromFile(json, *db_items_ptr);
+
+    return db_items_ptr;
 }
 
 int main(int argc, char **argv)
@@ -164,13 +170,17 @@ int main(int argc, char **argv)
                 TableConnector(&stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
             };
             // Load the json file containing the SWITCH_TABLE
-            load_json(switch_table_file);
+            auto db_items_ptr = load_json(switch_table_file);
+            write_to_state_db(db_items_ptr);
+            db_items_ptr.reset();
 
             if (!peripherial_table_file.empty())
             {
                 //Load the json file containing the PERIPHERIAL_TABLE
+                db_items_ptr = load_json(peripherial_table_file);
+                write_to_state_db(db_items_ptr);
             }
-            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, buffer_table_connectors));
+            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, buffer_table_connectors, db_items_ptr));
         }
         else
         {
