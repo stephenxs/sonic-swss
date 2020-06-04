@@ -38,10 +38,12 @@ mutex gDbMutex;
 
 void usage()
 {
-    cout << "Usage: buffermgrd -l pg_lookup.ini" << endl;
-    cout << "       -l pg_lookup.ini: PG profile look up table file (mandatory)" << endl;
-    cout << "       format: csv" << endl;
-    cout << "       values: 'speed, cable, size, xon,  xoff, dynamic_threshold, xon_offset'" << endl;
+    cout << "Usage: buffermgrd <-l pg_lookup.ini|-a asic_table.json [-p peripheral_table.json]>" << endl;
+    cout << "       -l pg_lookup.ini: PG profile look up table file (mandatory for static mode)" << endl;
+    cout << "           format: csv" << endl;
+    cout << "           values: 'speed, cable, size, xon,  xoff, dynamic_threshold, xon_offset'" << endl;
+    cout << "       -a asic_table.json: ASIC-specific parameters definition (mandatory for dynamic mode)" << endl;
+    cout << "       -p peripheral_table.json: Peripheral (eg. gearbox) parameters definition (mandatory for dynamic mode)" << endl;
 }
 
 void dump_db_item(KeyOpFieldsValuesTuple &db_item)
@@ -88,7 +90,12 @@ shared_ptr<vector<KeyOpFieldsValuesTuple>> load_json(string file)
         SWSS_LOG_ERROR("Unable to allocate memory when parsing %s", file.c_str());
         abort();
     }
-    JSon::loadJsonFromFile(json, *db_items_ptr);
+
+    if (!JSon::loadJsonFromFile(json, *db_items_ptr))
+    {
+        db_items_ptr.reset();
+        return nullptr;
+    }
 
     return db_items_ptr;
 }
@@ -97,7 +104,7 @@ int main(int argc, char **argv)
 {
     int opt;
     string pg_lookup_file = "";
-    string switch_table_file = "";
+    string asic_table_file = "";
     string peripherial_table_file = "";
     string json_file = "";
     Logger::linkToDbNative("buffermgrd");
@@ -105,7 +112,7 @@ int main(int argc, char **argv)
 
     SWSS_LOG_NOTICE("--- Starting buffermgrd ---");
 
-    while ((opt = getopt(argc, argv, "l:h:s:p:j")) != -1 )
+    while ((opt = getopt(argc, argv, "l:h:a:p:j")) != -1 )
     {
         switch (opt)
         {
@@ -115,18 +122,12 @@ int main(int argc, char **argv)
         case 'h':
             usage();
             return 1;
-        case 's':
-            switch_table_file = optarg;
+        case 'a':
+            asic_table_file = optarg;
             break;
         case 'p':
             peripherial_table_file = optarg;
             break;
-        case 'j':
-        {
-            string json_file = optarg;
-            load_json(json_file);
-            return 0;
-        }
         default: /* '?' */
             usage();
             return EXIT_FAILURE;
@@ -136,26 +137,35 @@ int main(int argc, char **argv)
     try
     {
         std::vector<Orch *> cfgOrchList;
+        bool dynamicMode = false;
+        shared_ptr<vector<KeyOpFieldsValuesTuple>> db_items_ptr;
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
         DBConnector applDb("APPL_DB", 0);
 
-        if (!pg_lookup_file.empty())
+        if (!asic_table_file.empty())
         {
-            vector<string> cfg_buffer_tables = {
-                CFG_PORT_TABLE_NAME,
-                CFG_PORT_CABLE_LEN_TABLE_NAME,
-                CFG_BUFFER_POOL_TABLE_NAME,
-                CFG_BUFFER_PROFILE_TABLE_NAME,
-                CFG_BUFFER_PG_TABLE_NAME,
-                CFG_BUFFER_QUEUE_TABLE_NAME,
-                CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
-                CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
-            };
-            cfgOrchList.emplace_back(new BufferMgr(&cfgDb, &stateDb, &applDb, pg_lookup_file, cfg_buffer_tables));
+            // Load the json file containing the SWITCH_TABLE
+            db_items_ptr = load_json(asic_table_file);
+            if (nullptr != db_items_ptr)
+            {
+                write_to_state_db(db_items_ptr);
+                db_items_ptr.reset();
+
+                if (!peripherial_table_file.empty())
+                {
+                    //Load the json file containing the PERIPHERIAL_TABLE
+                    db_items_ptr = load_json(peripherial_table_file);
+                    if (nullptr != db_items_ptr)
+                        write_to_state_db(db_items_ptr);
+                }
+            }
+
+            dynamicMode = true;
         }
-        else if (!switch_table_file.empty())
+
+        if (dynamicMode)
         {
             vector<TableConnector> buffer_table_connectors = {
                 TableConnector(&cfgDb, CFG_PORT_TABLE_NAME),
@@ -169,18 +179,21 @@ int main(int argc, char **argv)
                 TableConnector(&cfgDb, CFG_DEFAULT_LOSSLESS_BUFFER_PARAMETER),
                 TableConnector(&stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
             };
-            // Load the json file containing the SWITCH_TABLE
-            auto db_items_ptr = load_json(switch_table_file);
-            write_to_state_db(db_items_ptr);
-            db_items_ptr.reset();
-
-            if (!peripherial_table_file.empty())
-            {
-                //Load the json file containing the PERIPHERIAL_TABLE
-                db_items_ptr = load_json(peripherial_table_file);
-                write_to_state_db(db_items_ptr);
-            }
             cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, buffer_table_connectors, db_items_ptr));
+        }
+        else if (!pg_lookup_file.empty())
+        {
+            vector<string> cfg_buffer_tables = {
+                CFG_PORT_TABLE_NAME,
+                CFG_PORT_CABLE_LEN_TABLE_NAME,
+                CFG_BUFFER_POOL_TABLE_NAME,
+                CFG_BUFFER_PROFILE_TABLE_NAME,
+                CFG_BUFFER_PG_TABLE_NAME,
+                CFG_BUFFER_QUEUE_TABLE_NAME,
+                CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+                CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
+            };
+            cfgOrchList.emplace_back(new BufferMgr(&cfgDb, &stateDb, &applDb, pg_lookup_file, cfg_buffer_tables));
         }
         else
         {
