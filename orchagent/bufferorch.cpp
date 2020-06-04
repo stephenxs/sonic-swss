@@ -132,15 +132,26 @@ void BufferOrch::initBufferConstants()
     }
 
     vector<string> keys;
+    string key;
     vector<FieldValueTuple> fvVector;
     m_stateBufferMaximumValueTable.getKeys(keys);
-    if (keys.size() > 1)
+    auto key_size = keys.size();
+    if (key_size > 1)
     {
         SWSS_LOG_ERROR("Multiple entries in %s table, taking the first one", STATE_BUFFER_MAXIMUM_VALUE_TABLE);
     }
+    else if (key_size == 0)
+    {
+        SWSS_LOG_WARN("No table entry %s found, create one", STATE_BUFFER_MAXIMUM_VALUE_TABLE);
+        key = "AZURE";
+    }
+    else
+    {
+        key = keys[0];
+    }
 
     fvVector.emplace_back(make_pair("mmu_size", to_string(attr.value.u64 * 1024)));
-    m_stateBufferMaximumValueTable.set(keys[0], fvVector);
+    m_stateBufferMaximumValueTable.set(key, fvVector);
     SWSS_LOG_NOTICE("Got maximum memory size %lu, exposing to %s|%s",
                     attr.value.u64, STATE_BUFFER_MAXIMUM_VALUE_TABLE, keys[0].c_str());
 }
