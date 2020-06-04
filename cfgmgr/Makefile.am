@@ -5,6 +5,13 @@ LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 
 bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd
 
+cfgmgrdir = $(datadir)/swss
+
+dist_cfgmgr_DATA = \
+		buffer_check_headroom_mellanox.lua \
+		buffer_headroom_mellanox.lua \
+		buffer_pool_mellanox.lua
+
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
 else
