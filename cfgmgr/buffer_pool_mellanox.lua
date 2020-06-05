@@ -100,8 +100,14 @@ end
 
 -- Fetch mmu_size
 redis.call('SELECT', state_db)
-local asic_keys = redis.call('KEYS', 'BUFFER_MAX_PARAM*')
-local mmu_size = tonumber(redis.call('HGET', asic_keys[1], 'mmu_size'))
+local buffer_param_keys = redis.call('KEYS', 'BUFFER_MAX_PARAM*')
+local mmu_size = tonumber(redis.call('HGET', buffer_param_keys[1], 'mmu_size'))
+local asic_keys = redis.call('KEYS', 'ASIC_TABLE*')
+local cell_size = tonumber(redis.call('HGET', asic_keys[1], 'cell_size'))
+
+-- Align mmu_size at cell size boundary, otherwith the sdk will complain and the syncd will faill
+local number_of_cells = math.floor(mmu_size / cell_size)
+local ceiling_mmu_size = number_of_cells * cell_size
 
 -- Switch to CONFIG_DB
 redis.call('SELECT', config_db)
@@ -137,6 +143,10 @@ if ingress_pool_count == 1 then
     pool_size = mmu_size - accumulative_occupied_buffer
 else
     pool_size = (mmu_size - accumulative_occupied_buffer) / 2
+end
+
+if pool_size > ceiling_mmu_size then
+    pool_size = ceiling_mmu_size
 end
 
 for i = 1, #pools_need_update, 1 do

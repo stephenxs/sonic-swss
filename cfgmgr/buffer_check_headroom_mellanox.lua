@@ -12,6 +12,20 @@ local state_db = "6"
 
 local ret = {}
 
+-- Fetch the threshold from STATE_DB
+redis.call('SELECT', state_db)
+
+local asic_keys = redis.call('KEYS', 'BUFFER_MAX_PARAM*')
+local max_headroom_size = tonumber(redis.call('HGET', asic_keys[1], 'max_headroom_size'))
+if max_headroom_size == nil then
+    table.insert(ret, "result:true")
+    return ret
+end
+
+asic_keys = redis.call('KEYS', 'ASIC_TABLE*')
+local pipeline_delay = tonumber(redis.call('HGET', asic_keys[1], 'pipeline_latency'))
+accumulative_size = accumulative_size + 2 * pipeline_delay * 1024
+
 -- Fetch all keys in BUFFER_PG according to the port
 redis.call('SELECT', appl_db)
 
@@ -48,17 +62,6 @@ for i = 1, #pg_keys do
         end
     end
 end
-
--- Fetch the threshold from STATE_DB
-redis.call('SELECT', state_db)
-
-local asic_keys = redis.call('KEYS', 'BUFFER_MAX_PARAM*')
-local max_headroom_size = tonumber(redis.call('HGET', asic_keys[1], 'max_headroom_size'))
-
-asic_keys = redis.call('KEYS', 'ASIC_TABLE*')
-local pipeline_delay = tonumber(redis.call('HGET', asic_keys[1], 'pipeline_latency'))
-
-accumulative_size = accumulative_size + 2 * pipeline_delay * 1024
 
 if max_headroom_size > accumulative_size then
     table.insert(ret, "result:true")

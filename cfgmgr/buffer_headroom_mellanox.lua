@@ -30,6 +30,10 @@ local state_db = "6"
 
 local ret = {}
 
+if gearbox_delay == nil then
+    gearbox_delay = 0
+end
+
 -- Fetch ASIC info from ASIC table in STATE_DB
 redis.call('SELECT', state_db)
 local asic_keys = redis.call('KEYS', 'ASIC_TABLE*')
@@ -110,10 +114,14 @@ end
 bytes_on_cable = 2 * cable_length * port_speed * 1000000 / speed_of_light / 8
 propagation_delay = mtu + 2 * (bytes_on_cable + bytes_on_gearbox) + mac_phy_delay + peer_response_time
 
+-- Calculate the xoff and xon and then round up at 1024 bytes
 xoff_value = mtu + propagation_delay * cell_occupancy
+xoff_value = math.ceil(xoff_value / 1024) * 1024
 xon_value = pipeline_latency
+xon_value = math.ceil(xon_value / 1024) * 1024
 
 headroom_size = xoff_value + xon_value + speed_overhead
+headroom_size = math.ceil(headroom_size / 1024) * 1024
 
 table.insert(ret, "xon" .. ":" .. math.ceil(xon_value))
 table.insert(ret, "xoff" .. ":" .. math.ceil(xoff_value))
