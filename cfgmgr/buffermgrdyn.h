@@ -42,7 +42,19 @@ typedef struct {
     std::string profile_name;
 } buffer_pg_t;
 
+typedef enum {
+    // Port is under initializing, which means its info hasn't been comprehensive for calculating headroom
+    PORT_INITIALIZING,
+    // All necessary information for calculating headrom is ready
+    PORT_READY,
+    // Currently at least one of the PGs has been configured as dynamic headroom
+    PORT_DYNAMIC_HEADROOM,
+    // Currently at least one of the PGs has been configured as headroom override
+    PORT_HEADROOM_OVERRIDE
+} port_state_t;
+
 typedef struct {
+    port_state_t state;
     std::string speed;
     std::string cable_length;
     std::string gearbox_model;

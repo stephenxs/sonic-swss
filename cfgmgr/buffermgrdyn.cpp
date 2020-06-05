@@ -549,19 +549,22 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(const strin
         isHeadroomUpdated = true;
     }
 
+    portInfo.speed = speed;
+    portInfo.cable_length = cable_length;
+    portInfo.gearbox_model = gearbox_model;
+
     if (isHeadroomUpdated)
     {
         recalculateSharedBufferPool();
 
         //update internal map
-        portInfo.speed = speed;
-        portInfo.cable_length = cable_length;
-        portInfo.gearbox_model = gearbox_model;
         portInfo.profile_name = newProfile;
+        portInfo.state = PORT_DYNAMIC_HEADROOM;
     }
     else
     {
         SWSS_LOG_DEBUG("Nothing to do for port %s since no PG configured on it", port.c_str());
+        portInfo.state = PORT_READY;
     }
 
     //Remove the old profile which is probably not referenced anymore.
@@ -581,9 +584,11 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, strin
     auto port = parseObjectNameFromKey(pg_key);
     string value;
     port_info_t &portInfo = m_portInfoLookup[port];
+    task_process_status task_status = task_process_status::task_success;
 
-    if (!portInfo.profile_name.empty())
+    switch (portInfo.state)
     {
+    case PORT_DYNAMIC_HEADROOM:
         // Headroom information has already been deployed for the port, no need to recaluclate
         // but need to check accumulative headroom size limit.
         if (!isHeadroomResourceValid(port, m_bufferProfileLookup[portInfo.profile_name]))
@@ -598,30 +603,36 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, strin
 
         m_profileToPortMap[portInfo.profile_name].insert(pg_key);
 
-        //TODO: recalculate pool size
+        // Recalculate pool size
         recalculateSharedBufferPool();
-    }
-    else
-    {
-        if (!portInfo.speed.empty() && !portInfo.cable_length.empty())
-        {
-            // Not having profile_name but both speed and cable length have been configured for that port
-            // This is because the first PG on that port is configured after speed, cable length configured
-            // Just regenerate the profile
-            task_process_status rc = doSpeedOrCableLengthUpdateTask(port, portInfo.speed, portInfo.cable_length);
-            if (rc != task_process_status::task_success)
-                return rc;
 
-            // On success, the portInfo.profile_name should be updated
-            m_profileToPortMap[portInfo.profile_name].insert(pg_key);            
-        }
-        else
-        {
+        break;
+
+    case PORT_READY:
+        // Not having profile_name but both speed and cable length have been configured for that port
+        // This is because the first PG on that port is configured after speed, cable length configured
+        // Just regenerate the profile
+        task_status = doSpeedOrCableLengthUpdateTask(port, portInfo.speed, portInfo.cable_length);
+        if (task_status != task_process_status::task_success)
+            return task_status;
+
+        // On success, the portInfo.profile_name should be updated
+        m_profileToPortMap[portInfo.profile_name].insert(pg_key);
+
+        break;
+
+    case PORT_HEADROOM_OVERRIDE:
+        SWSS_LOG_ERROR("Failed to set BUFFER_PG for %s to dynamic profile, headroom override should be removed first",
+                       pg_key.c_str());
+        return task_process_status::task_failed;
+
+	case PORT_INITIALIZING:
+    default:
             // speed and cable length hasn't been configured
             // In that case, we just skip the this update and return success.
             // It will be handled after speed and cable length configured.
-            SWSS_LOG_NOTICE("Skip setting BUFFER_PG for %s because its profile hasn't created", pg_key.c_str());
-        }
+        SWSS_LOG_NOTICE("Skip setting BUFFER_PG for %s because its profile hasn't created", pg_key.c_str());
+        return task_process_status::task_success;
     }
 
     profile = portInfo.profile_name;
@@ -642,8 +653,29 @@ task_process_status BufferMgrDynamic::doRemovePgTask(const string &pg_key)
 
     SWSS_LOG_NOTICE("Remove BUFFER_PG for %s to profile %s", pg_key.c_str(), portInfo.profile_name.c_str());
 
-    // TODO: recalculate pool size
+    // recalculate pool size
     recalculateSharedBufferPool();
+
+    // Update port state
+    bool dynamic = false;
+    for ( auto it: m_portPgLookup[port])
+    {
+        auto &pg = it.second;
+        auto &key = it.first;
+
+        if (key == pg_key)
+            continue;
+
+        if (pg.dynamic_calculated)
+        {
+            dynamic = true;SWSS_LOG_DEBUG("BUFFER_PG: Dynamic profile %s pg %s is still on port %s",pg.profile_name.c_str(), key.c_str(), port.c_str());
+            break;
+        }
+    }
+    if (dynamic)
+        portInfo.state = PORT_DYNAMIC_HEADROOM;
+    else
+        portInfo.state = PORT_READY;
 
     return task_process_status::task_success;
 }
@@ -653,7 +685,13 @@ task_process_status BufferMgrDynamic::doUpdateHeadroomOverrideTask(const string 
 {
     string port = parseObjectNameFromKey(pg_key);
     auto &portInfo = m_portInfoLookup[port];
-    const auto &pgLookup = m_portPgLookup[port];
+
+    if (PORT_DYNAMIC_HEADROOM == portInfo.state)
+    {
+        SWSS_LOG_ERROR("Unable to configure profile %s on %s, dynamically calculated profile should be removed first",
+                       profile.c_str(), pg_key.c_str());
+        return task_process_status::task_failed;
+    }
 
     auto searchRef = m_bufferProfileLookup.find(profile);
     if (searchRef == m_bufferProfileLookup.end())
@@ -673,31 +711,8 @@ task_process_status BufferMgrDynamic::doUpdateHeadroomOverrideTask(const string 
         return task_process_status::task_failed;
     }
 
-    if (!portInfo.profile_name.empty() && portInfo.profile_name != profile)
-    {
-        bool noDynamic = true;
-        for (auto &it : pgLookup)
-        {
-            auto &portPg = it.second;
-
-            if (portPg.dynamic_calculated)
-            {
-                noDynamic = false;
-                break;
-            }
-        }
-
-        if (noDynamic)
-        {
-            portInfo.profile_name = profile;
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unable to configure profile %s on %s, dynamically calculated profile should be removed first",
-                           profile.c_str(), pg_key.c_str());
-            return task_process_status::task_failed;
-        }
-    }
+    portInfo.profile_name = profile;
+    portInfo.state = PORT_HEADROOM_OVERRIDE;
 
     updateBufferPgToDb(pg_key, profile, true);
 
@@ -712,7 +727,7 @@ task_process_status BufferMgrDynamic::doUpdateHeadroomOverrideTask(const string 
 
 task_process_status BufferMgrDynamic::doRemoveHeadroomOverrideTask(const string &pg_key, const string &profile)
 {
-    string port = parseObjectNameFromKey(pg_key);    
+    string port = parseObjectNameFromKey(pg_key);
     const buffer_pg_lookup_t &pgLookup = m_portPgLookup[port];
     bool noLossless = true;
 
@@ -723,6 +738,10 @@ task_process_status BufferMgrDynamic::doRemoveHeadroomOverrideTask(const string 
     for (auto &it : pgLookup)
     {
         auto &portPg = it.second;
+        auto &key = it.first;
+
+        if (key == pg_key)
+            continue;
 
         if (portPg.lossless && portPg.profile_name != profile)
         {
@@ -736,7 +755,11 @@ task_process_status BufferMgrDynamic::doRemoveHeadroomOverrideTask(const string 
     {
         auto &portInfo = m_portInfoLookup[port];
         portInfo.profile_name = "";
-        SWSS_LOG_DEBUG("Profile %s has been removed from %s%s", profile.c_str(), port.c_str(), portInfo.profile_name.c_str());
+        if (!portInfo.speed.empty() && !portInfo.cable_length.empty())
+            portInfo.state = PORT_READY;
+        else
+            portInfo.state = PORT_INITIALIZING;
+        SWSS_LOG_DEBUG("Profile %s has been removed from %s", profile.c_str(), port.c_str());
     }
 
     recalculateSharedBufferPool();
@@ -859,7 +882,22 @@ task_process_status BufferMgrDynamic::handleCableLenTable(Consumer &consumer)
             SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to cable length updated", port.c_str());
 
             //Try updating the buffer information
-            task_status = doSpeedOrCableLengthUpdateTask(port, speed, cable_length);
+            switch (portInfo.state)
+            {
+            case PORT_INITIALIZING:
+                portInfo.state = PORT_READY;
+                task_status = doSpeedOrCableLengthUpdateTask(port, speed, cable_length);
+                break;
+
+            case PORT_READY:
+            case PORT_DYNAMIC_HEADROOM:
+                task_status = doSpeedOrCableLengthUpdateTask(port, speed, cable_length);
+                break;
+
+            case PORT_HEADROOM_OVERRIDE:
+                break;
+            }
+
             switch (task_status)
             {
             case task_process_status::task_need_retry:
@@ -923,7 +961,21 @@ task_process_status BufferMgrDynamic::handlePortTable(Consumer &consumer)
                 SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to speed updated", port.c_str());
 
                 //Try updating the buffer information
-                task_status = doSpeedOrCableLengthUpdateTask(port, speed, cable_length);
+                switch (portInfo.state)
+                {
+                case PORT_INITIALIZING:
+                    portInfo.state = PORT_READY;
+                    task_status = doSpeedOrCableLengthUpdateTask(port, speed, cable_length);
+                    break;
+
+                case PORT_READY:
+                case PORT_DYNAMIC_HEADROOM:
+                    task_status = doSpeedOrCableLengthUpdateTask(port, speed, cable_length);
+                    break;
+
+                case PORT_HEADROOM_OVERRIDE:
+                    break;
+                }
 
                 switch (task_status)
                 {
