@@ -83,21 +83,24 @@ void write_to_state_db(shared_ptr<vector<KeyOpFieldsValuesTuple>> db_items_ptr)
 
 shared_ptr<vector<KeyOpFieldsValuesTuple>> load_json(string file)
 {
-    ifstream json(file);
-    auto db_items_ptr = make_shared<vector<KeyOpFieldsValuesTuple>>();
-    if (nullptr == db_items_ptr)
+    try
     {
-        SWSS_LOG_ERROR("Unable to allocate memory when parsing %s", file.c_str());
-        abort();
-    }
+        ifstream json(file);
+        auto db_items_ptr = make_shared<vector<KeyOpFieldsValuesTuple>>();
 
-    if (!JSon::loadJsonFromFile(json, *db_items_ptr))
+        if (!JSon::loadJsonFromFile(json, *db_items_ptr))
+        {
+            db_items_ptr.reset();
+            return nullptr;
+        }
+
+        return db_items_ptr;
+    }
+    catch (...)
     {
-        db_items_ptr.reset();
+        SWSS_LOG_WARN("Loading file %s failed", file.c_str());
         return nullptr;
     }
-
-    return db_items_ptr;
 }
 
 int main(int argc, char **argv)
