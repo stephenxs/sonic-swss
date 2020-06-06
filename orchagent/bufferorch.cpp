@@ -143,7 +143,7 @@ void BufferOrch::initBufferConstants()
     else if (key_size == 0)
     {
         SWSS_LOG_WARN("No table entry %s found, create one", STATE_BUFFER_MAXIMUM_VALUE_TABLE);
-        key = "AZURE";
+        key = "global";
     }
     else
     {
