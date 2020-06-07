@@ -180,6 +180,7 @@ private:
     void transformSeperator(std::string &name);
     std::string parseObjectNameFromKey(const std::string &key, size_t pos/* = 1*/);
     std::string parseObjectNameFromReference(const std::string &reference);
+    std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &gearbox_model);
 
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);

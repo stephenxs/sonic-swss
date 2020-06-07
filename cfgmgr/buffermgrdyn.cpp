@@ -52,7 +52,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     parseGearboxInfo(gearboxInfo);
     m_fullStart = false;
 
-    string platform = getenv("platform") ? getenv("platform") : "";
+    string platform = getenv("ASIC_VENDOR") ? getenv("ASIC_VENDOR") : "";
     if (platform == "")
     {
         SWSS_LOG_ERROR("Platform environment variable is not defined");
@@ -182,6 +182,22 @@ string BufferMgrDynamic::parseObjectNameFromReference(const string &reference)
 {
     auto objName = reference.substr(1, reference.size() - 2);
     return parseObjectNameFromKey(objName, 1);
+}
+
+string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string &cable, const string &gearbox_model)
+{
+    string buffer_profile_key;
+
+    if (gearbox_model.empty())
+    {
+        buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
+    }
+    else
+    {
+        buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_" + gearbox_model + "_profile";
+    }
+
+    return buffer_profile_key;
 }
 
 string BufferMgrDynamic::getPgPoolMode()
@@ -342,20 +358,9 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
 {
     // Create record in BUFFER_PROFILE table
     // key format is pg_lossless_<speed>_<cable>_profile
-    string buffer_profile_key;
+    string buffer_profile_key = getDynamicProfileName(speed, cable, gearbox_model);
 
-    if (gearbox_model.empty())
-    {
-        buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
-        SWSS_LOG_INFO("Allocating new BUFFER_PROFILE for speed %s cable length %s",
-                      speed.c_str(), cable.c_str());
-    }
-    else
-    {
-        buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_" + gearbox_model + "_profile";
-        SWSS_LOG_INFO("Allocating new BUFFER_PROFILE for speed %s cable length %s gearbox model %s",
-                      speed.c_str(), cable.c_str(), gearbox_model.c_str());
-    }
+    SWSS_LOG_INFO("Allocating new BUFFER_PROFILE %s", buffer_profile_key.c_str());
 
     // check if profile already exists - if yes - skip creation
     auto profileRef = m_bufferProfileLookup.find(buffer_profile_key);
@@ -1066,11 +1071,13 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(Consumer &consumer)
             fvVector.emplace_back(FieldValueTuple(buffer_size_field_name, m_mmuSize));
         }
         m_applBufferPoolTable.set(pool, fvVector);
+        m_stateBufferPoolTable.set(pool, fvVector);
     }
     else if (op == DEL_COMMAND)
     {
         // How do we handle dependency?
         m_applBufferPoolTable.del(pool);
+        m_stateBufferPoolTable.del(pool);
         m_bufferPoolLookup.erase(pool);
     }
     else
@@ -1185,6 +1192,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         else
         {
             m_applBufferProfileTable.set(profileName, fvVector);
+            m_stateBufferProfileTable.set(profileName, fvVector);
             m_bufferProfileIgnored.insert(profileName);
             SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been inserted into APPL_DB directly", profileName.c_str());
         }
@@ -1204,6 +1212,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         if (!profileApp.dynamic_calculated)
         {
             m_applBufferProfileTable.del(profileName);
+            m_stateBufferProfileTable.del(profileName);
         }
         m_bufferProfileLookup.erase(profileName);
         m_bufferProfileIgnored.erase(profileName);
@@ -1262,6 +1271,7 @@ task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
                         ignored = true;
                         bufferPg.dynamic_calculated = false;
                         bufferPg.lossless = false;
+                        bufferPg.profile_name = profileName;
                     }
                     else
                     {
