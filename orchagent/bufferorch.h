@@ -32,8 +32,8 @@ const string buffer_headroom_type_field_name= "headroom_type";
 class BufferOrch : public Orch
 {
 public:
-    BufferOrch(DBConnector *applDb, DBConnector *stateDb, vector<string> &tableNames);
-    BufferOrch(DBConnector *applDb, DBConnector *stateDb, vector<TableConnector> &tableConnectors);
+    BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames);
+    BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<TableConnector> &tableConnectors);
     bool isPortReady(const std::string& port_name) const;
     static type_map m_buffer_type_maps;
     void generateBufferPoolWatermarkCounterIdList(void);

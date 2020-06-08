@@ -34,7 +34,7 @@ type_map BufferOrch::m_buffer_type_maps = {
     {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()}
 };
 
-BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *stateDb, vector<string> &tableNames) :
+BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames) :
     Orch(applDb, tableNames),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
@@ -45,12 +45,12 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *stateDb, vector<string>
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
-    initBufferReadyLists(applDb);
+    initBufferReadyLists(confDb);
     initFlexCounterGroupTable();
     initBufferConstants();
 };
 
-BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *stateDb, vector<TableConnector> &tableConnectors) :
+BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<TableConnector> &tableConnectors) :
     Orch(tableConnectors),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
@@ -61,7 +61,7 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *stateDb, vector<TableCo
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
-    initBufferReadyLists(applDb);
+    initBufferReadyLists(confDb);
     initFlexCounterGroupTable();
     initBufferConstants();
 };
@@ -79,12 +79,15 @@ void BufferOrch::initTableHandlers()
 
 void BufferOrch::initBufferReadyLists(DBConnector *db)
 {
+    // The motivation of m_ready_list is to get the preconfigured buffer pg and buffer queue items
+    // from the database when system starts.
+    // When a buffer pg or queue item is updated, if the item isn't in the m_ready_list
     SWSS_LOG_ENTER();
 
-    Table pg_table(db, APP_BUFFER_PG_TABLE_NAME);
+    Table pg_table(db, CFG_BUFFER_PG_TABLE_NAME);
     initBufferReadyList(pg_table);
 
-    Table queue_table(db, APP_BUFFER_QUEUE_TABLE_NAME);
+    Table queue_table(db, CFG_BUFFER_QUEUE_TABLE_NAME);
     initBufferReadyList(queue_table);
 }
 
@@ -98,20 +101,23 @@ void BufferOrch::initBufferReadyList(Table& table)
     // populate the lists with buffer configuration information
     for (const auto& key: keys)
     {
-        m_ready_list[key] = false;
-
-        auto tokens = tokenize(key, delimiter);
+        auto tokens = tokenize(key, config_db_key_delimiter);
         if (tokens.size() != 2)
         {
             SWSS_LOG_ERROR("Wrong format of a table '%s' key '%s'. Skip it", table.getTableName().c_str(), key.c_str());
             continue;
         }
 
+        // We need transform the key from config db format to appl db format
+        auto appldb_key = tokens[0] + delimiter + tokens[1];
+        m_ready_list[appldb_key] = false;
+
         auto port_names = tokenize(tokens[0], list_item_delimiter);
 
         for(const auto& port_name: port_names)
         {
-            m_port_ready_list_ref[port_name].push_back(key);
+            SWSS_LOG_INFO("Item %s has been inserted into ready list", appldb_key.c_str());
+            m_port_ready_list_ref[port_name].push_back(appldb_key);
         }
     }
 }
@@ -634,7 +640,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
         for (const auto &port_name : port_names)
         {
             if (gPortsOrch->isPortAdminUp(port_name)) {
-                SWSS_LOG_ERROR("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
             }
         }
     }
@@ -738,7 +744,7 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
         for (const auto &port_name : port_names)
         {
             if (gPortsOrch->isPortAdminUp(port_name)) {
-                SWSS_LOG_ERROR("PG profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                SWSS_LOG_WARN("PG profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
             }
         }
     }
