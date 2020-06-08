@@ -56,7 +56,6 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     if (platform == "")
     {
         SWSS_LOG_ERROR("Platform environment variable is not defined");
-        platform = "mellanox";
     }
 
     string headroomSha, bufferpoolSha;
@@ -1275,6 +1274,9 @@ task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
                     }
                     else
                     {
+                        // In this case, the dynamc calculated should not be true
+                        // It will be updated when its profile configured.
+                        bufferPg.dynamic_calculated = false;
                         SWSS_LOG_WARN("Profile %s hasn't been configured yet, skip", profileName.c_str());
                         return task_process_status::task_need_retry;
                     }
