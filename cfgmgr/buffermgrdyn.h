@@ -210,6 +210,7 @@ private:
     task_process_status handlePortTable(Consumer &consumer);
     task_process_status handleBufferPoolTable(Consumer &consumer);
     task_process_status handleBufferProfileTable(Consumer &consumer);
+    task_process_status handleOneBufferPgEntry(const std::string &key, const std::string &port, const std::string &op, const KeyOpFieldsValuesTuple &tuple);
     task_process_status handleBufferPgTable(Consumer &consumer);
     task_process_status handleBufferQueueTable(Consumer &consumer);
     task_process_status handleBufferPortIngressProfileListTable(Consumer &consumer);

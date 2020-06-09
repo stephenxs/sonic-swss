@@ -1224,17 +1224,9 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
+task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, const string &port, const string &op, const KeyOpFieldsValuesTuple &tuple)
 {
-    SWSS_LOG_ENTER();
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
-    string key = kfvKey(tuple);
-    string op = kfvOp(tuple);
     vector<FieldValueTuple> fvVector;
-
-    transformSeperator(key);
-    string port = parseObjectNameFromKey(key);
     buffer_pg_t &bufferPg = m_portPgLookup[port][key];
 
     SWSS_LOG_DEBUG("processing command:%s table BUFFER_PG key %s", op.c_str(), key.c_str());
@@ -1251,8 +1243,8 @@ task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
         bufferPg.dynamic_calculated = true;
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
-            string &field = fvField(*i);
-            string &value = fvValue(*i);
+            const string &field = fvField(*i);
+            string value = fvValue(*i);
 
             SWSS_LOG_DEBUG("field:%s, value:%s", field.c_str(), value.c_str());
             if (field == buffer_profile_field_name)
@@ -1370,7 +1362,41 @@ task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
         SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         return task_process_status::task_invalid_entry;
     }
+
     return task_process_status::task_success;
+}
+
+task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+    auto it = consumer.m_toSync.begin();
+    KeyOpFieldsValuesTuple tuple = it->second;
+    string key = kfvKey(tuple);
+    string op = kfvOp(tuple);
+
+    transformSeperator(key);
+    string ports = parseObjectNameFromKey(key);
+    string pgs = parseObjectNameFromKey(key, 1);
+    auto portsList = tokenize(ports, ',');
+
+    task_process_status rc = task_process_status::task_success;
+
+    if (portsList.size() == 1)
+    {
+        rc = handleOneBufferPgEntry(key, ports, op, tuple);
+    }
+    else
+    {
+        for (auto port : portsList)
+        {
+            string singleKey = port + ':' + pgs;
+            rc = handleOneBufferPgEntry(singleKey, port, op, tuple);
+            if (rc == task_process_status::task_need_retry)
+                return rc;
+        }
+    }
+
+    return rc;
 }
 
 task_process_status BufferMgrDynamic::handleBufferQueueTable(Consumer &consumer)
