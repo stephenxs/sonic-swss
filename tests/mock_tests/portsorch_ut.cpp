@@ -95,6 +95,7 @@ namespace portsorch_test
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+        Table pgTableCfg = Table(m_config_db.get(), CFG_BUFFER_PG_TABLE_NAME);
         Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
         Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
 
@@ -121,9 +122,11 @@ namespace portsorch_test
         // Apply profile on PGs 3-4 all ports
         for (const auto &it : ports)
         {
-            std::ostringstream oss;
-            oss << it.first << ":3-4";
-            pgTable.set(oss.str(), { { "profile", "[BUFFER_PROFILE:test_profile]" } });
+            std::ostringstream ossAppl, ossCfg;
+            ossAppl << it.first << ":3-4";
+            pgTable.set(ossAppl.str(), { { "profile", "[BUFFER_PROFILE:test_profile]" } });
+            ossCfg << it.first << "|3-4";
+            pgTableCfg.set(ossCfg.str(), { { "profile", "[BUFFER_PROFILE|test_profile]" } });
         }
 
         // Create dependencies ...
@@ -148,7 +151,7 @@ namespace portsorch_test
                                          APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
 
         ASSERT_EQ(gBufferOrch, nullptr);
-        gBufferOrch = new BufferOrch(m_app_db.get(), m_state_db.get(), buffer_tables);
+        gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
 
         // Populate pot table with SAI ports
         for (const auto &it : ports)
@@ -277,7 +280,7 @@ namespace portsorch_test
                                          APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
 
         ASSERT_EQ(gBufferOrch, nullptr);
-        gBufferOrch = new BufferOrch(m_app_db.get(), m_state_db.get(), buffer_tables);
+        gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
 
         // warm start, bake fill refill consumer
 
@@ -347,7 +350,7 @@ namespace portsorch_test
                                          APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
 
         ASSERT_EQ(gBufferOrch, nullptr);
-        gBufferOrch = new BufferOrch(m_app_db.get(), m_state_db.get(), buffer_tables);
+        gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
 
         // Populate port table with SAI ports
         for (const auto &it : ports)
@@ -478,7 +481,7 @@ namespace portsorch_test
                                          APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
 
         ASSERT_EQ(gBufferOrch, nullptr);
-        gBufferOrch = new BufferOrch(m_app_db.get(), m_state_db.get(), buffer_tables);
+        gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
 
         /*
          * Next we will prepare some configuration data to be consumed by PortsOrch
