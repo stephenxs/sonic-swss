@@ -6,6 +6,7 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
+#include "timer.h"
 #include "buffermgrdyn.h"
 #include "bufferorch.h"
 #include "exec.h"
@@ -43,7 +44,10 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_stateBufferMaximumTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
         m_stateBufferPoolTable(stateDb, STATE_BUFFER_POOL_TABLE_NAME),
         m_stateBufferProfileTable(stateDb, STATE_BUFFER_PROFILE_TABLE_NAME),
-        m_fullStart(false)
+        m_applPortTable(applDb, APP_PORT_TABLE_NAME),
+        m_fullStart(false),
+        m_portInitDone(false),
+        m_firstTimeCalculateBufferPool(true)
 {
     SWSS_LOG_ENTER();
 
@@ -79,11 +83,12 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         SWSS_LOG_WARN("Lua scripts for buffer calculation were not loaded successfully");
     }
 
-    //TODO: to initialize ASIC_TABLE
-
-    //TODO: to initialize PERIPHERAL_TABLE and PORT_PERIPHERAL_TABLE if any
-
-    //Post: ASIC_TABLE and PERIPHERIAL_TABLE has been initialized
+    // Init timer
+    auto interv = timespec { .tv_sec = WAIT_FOR_PORT_INIT_DONE_TIMER, .tv_nsec = 0 };
+    m_timerWaitPortInitDone = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(m_timerWaitPortInitDone, this, "PORT_INIT_DONE_POLL_TIMER");
+    Orch::addExecutor(executor);
+    m_timerWaitPortInitDone->start();
 }
 
 void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo)
@@ -250,11 +255,11 @@ void BufferMgrDynamic::calculateHeadroomSize(const string &speed, const string &
 
 void BufferMgrDynamic::recalculateSharedBufferPool()
 {
-    vector<string> keys = {};
-    vector<string> argv = {};
-
     try
     {
+        vector<string> keys = {};
+        vector<string> argv = {};
+
         auto ret = runRedisScript(*m_applDb, m_bufferpoolSha, keys, argv);
 
         // The format of the result:
@@ -278,6 +283,34 @@ void BufferMgrDynamic::recalculateSharedBufferPool()
     {
         SWSS_LOG_WARN("Lua scripts for buffer calculation were not executed successfully");
     }
+}
+
+void BufferMgrDynamic::checkSharedBufferPoolSize()
+{
+    // PortInitDone indicates all steps of port initialization has been done
+    // Only after that does the buffer pool size update starts
+    if (!m_portInitDone)
+    {
+        vector<FieldValueTuple> values;
+        if (m_applPortTable.get("PortInitDone", values))
+        {
+            m_portInitDone = true;
+            m_timerWaitPortInitDone->stop();
+        }
+        else
+        {
+            if (m_firstTimeCalculateBufferPool)
+            {
+                recalculateSharedBufferPool();
+                m_firstTimeCalculateBufferPool = false;
+                SWSS_LOG_NOTICE("Buffer pool update defered because port is still under initialization, start polling timer");
+            }
+
+            return;
+        }
+    }
+
+    recalculateSharedBufferPool();
 }
 
 // For buffer pool, only size can be updated on-the-fly
@@ -559,7 +592,7 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(const strin
 
     if (isHeadroomUpdated)
     {
-        recalculateSharedBufferPool();
+        checkSharedBufferPoolSize();
 
         //update internal map
         portInfo.profile_name = newProfile;
@@ -608,7 +641,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, strin
         m_profileToPortMap[portInfo.profile_name].insert(pg_key);
 
         // Recalculate pool size
-        recalculateSharedBufferPool();
+        checkSharedBufferPoolSize();
 
         break;
 
@@ -658,7 +691,7 @@ task_process_status BufferMgrDynamic::doRemovePgTask(const string &pg_key)
     SWSS_LOG_NOTICE("Remove BUFFER_PG for %s to profile %s", pg_key.c_str(), portInfo.profile_name.c_str());
 
     // recalculate pool size
-    recalculateSharedBufferPool();
+    checkSharedBufferPoolSize();
 
     // Update port state
     bool dynamic = false;
@@ -724,7 +757,7 @@ task_process_status BufferMgrDynamic::doUpdateHeadroomOverrideTask(const string 
 
     SWSS_LOG_NOTICE("Headroom override %s has been configured on %s", profile.c_str(), pg_key.c_str());
 
-    recalculateSharedBufferPool();
+    checkSharedBufferPoolSize();
 
     return task_process_status::task_success;
 }
@@ -766,7 +799,7 @@ task_process_status BufferMgrDynamic::doRemoveHeadroomOverrideTask(const string 
         SWSS_LOG_DEBUG("Profile %s has been removed from %s", profile.c_str(), port.c_str());
     }
 
-    recalculateSharedBufferPool();
+    checkSharedBufferPoolSize();
 
     return task_process_status::task_success;
 }
@@ -799,7 +832,7 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(const string &pr
 
     m_bufferProfileLookup[profileName] = profile;
 
-    recalculateSharedBufferPool();
+    checkSharedBufferPoolSize();
 
     return task_process_status::task_success;
 }
@@ -1001,7 +1034,7 @@ task_process_status BufferMgrDynamic::handlePortTable(Consumer &consumer)
                 if (!portInfo.profile_name.empty())
                 {
                     SWSS_LOG_INFO("Recalculate shared buffer pool size due to port %s's admin_status updated", port.c_str());
-                    recalculateSharedBufferPool();
+                    checkSharedBufferPoolSize();
                 }
             }
         }
@@ -1515,5 +1548,21 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 break;
         }
+    }
+}
+
+void BufferMgrDynamic::doTask(SelectableTimer &timer)
+{
+    vector<FieldValueTuple> values;
+    if (m_applPortTable.get("PortInitDone", values))
+    {
+        m_portInitDone = true;
+        timer.stop();
+        SWSS_LOG_NOTICE("Buffer pools start to be updated");
+        recalculateSharedBufferPool();
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Buffer pools: still waiting for PortInitDone");
     }
 }

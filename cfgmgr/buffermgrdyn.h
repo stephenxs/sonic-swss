@@ -14,6 +14,8 @@ namespace swss {
 #define INGRESS_LOSSLESS_PG_POOL_NAME "ingress_lossless_pool"
 #define LOSSLESS_PGS "3-4"
 
+#define WAIT_FOR_PORT_INIT_DONE_TIMER 10
+
 typedef struct {
     bool ingress;
     bool dynamic_size;
@@ -100,8 +102,11 @@ private:
     buffer_table_handler_map m_bufferTableHandlerMap;
 
     bool m_fullStart;
+    bool m_portInitDone;
+    bool m_firstTimeCalculateBufferPool;
 
     std::shared_ptr<DBConnector> m_applDb = nullptr;
+    SelectableTimer *m_timerWaitPortInitDone = nullptr;
 
     // CONFIG_DB tables
     Table m_cfgPortTable;
@@ -123,6 +128,8 @@ private:
     ProducerStateTable m_applBufferQueueTable;
     ProducerStateTable m_applBufferIngressProfileListTable;
     ProducerStateTable m_applBufferEgressProfileListTable;
+
+    Table m_applPortTable;
 
     // Internal maps
     // m_bufferPoolLookup - the cache for the buffer pool
@@ -189,6 +196,7 @@ private:
 
     // Meta flows
     void calculateHeadroomSize(const std::string &speed, const std::string &cable, const std::string &gearbox_model, buffer_profile_t &headroom);
+    void checkSharedBufferPoolSize();
     void recalculateSharedBufferPool();
     task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &gearbox_model, std::string &profile_name);
     void releaseProfile(const std::string &profile_name);
@@ -206,6 +214,7 @@ private:
     // Table update handlers
     task_process_status handleBufferMaxParam(Consumer &consumer);
     task_process_status handleDefaultLossLessBufferParam(Consumer &consumer);
+    task_process_status handleBufferInitializationState(Consumer &consumer);
     task_process_status handleCableLenTable(Consumer &consumer);
     task_process_status handlePortTable(Consumer &consumer);
     task_process_status handleBufferPoolTable(Consumer &consumer);
@@ -217,6 +226,7 @@ private:
     task_process_status handleBufferPortEgressProfileListTable(Consumer &consumer);
     task_process_status doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
     void doTask(Consumer &consumer);
+    void doTask(SelectableTimer &timer);
 };
 
 }
