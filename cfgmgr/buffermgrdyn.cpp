@@ -271,10 +271,11 @@ void BufferMgrDynamic::recalculateSharedBufferPool()
             auto pairs = tokenize(i, ':');
             auto poolName = pairs[0];
             auto pool = m_bufferPoolLookup[pairs[0]];
+            auto create = pool.total_size.empty();
 
             pool.total_size = pairs[1];
 
-            updateBufferPoolToDb(poolName, pool);
+            updateBufferPoolToDb(poolName, pool, create);
 
             SWSS_LOG_NOTICE("Buffer pool %s had been updated with new size [%s]", poolName.c_str(), pool.total_size.c_str());
         }
@@ -314,9 +315,19 @@ void BufferMgrDynamic::checkSharedBufferPoolSize()
 }
 
 // For buffer pool, only size can be updated on-the-fly
-void BufferMgrDynamic::updateBufferPoolToDb(const string &name, const buffer_pool_t &pool)
+void BufferMgrDynamic::updateBufferPoolToDb(const string &name, const buffer_pool_t &pool, bool create)
 {
     vector<FieldValueTuple> fvVector;
+
+    if (create)
+    {
+        if (pool.ingress)
+            fvVector.emplace_back(make_pair("type", "ingress"));
+        else
+            fvVector.emplace_back(make_pair("type", "egress"));
+
+        fvVector.emplace_back(make_pair("mode", pool.mode));
+    }
 
     fvVector.emplace_back(make_pair("size", pool.total_size));
 
@@ -1100,10 +1111,12 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(Consumer &consumer)
                 SWSS_LOG_NOTICE("MMU size must be initialized first");
                 return task_process_status::task_need_retry;
             }
-            fvVector.emplace_back(FieldValueTuple(buffer_size_field_name, m_mmuSize));
         }
-        m_applBufferPoolTable.set(pool, fvVector);
-        m_stateBufferPoolTable.set(pool, fvVector);
+        else
+        {
+            m_applBufferPoolTable.set(pool, fvVector);
+            m_stateBufferPoolTable.set(pool, fvVector);
+        }
     }
     else if (op == DEL_COMMAND)
     {

@@ -190,7 +190,7 @@ private:
     std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &gearbox_model);
 
     // APPL_DB table operations
-    void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
+    void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool, bool create);
     void updateBufferProfileToDb(const std::string &name, const buffer_profile_t &profile);
     void updateBufferPgToDb(const std::string &key, const std::string &profile, bool add);
 
