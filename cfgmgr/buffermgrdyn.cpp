@@ -99,6 +99,7 @@ void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple
     }
     else
     {
+        string gearboxModel;
         for (auto &kfv : *gearboxInfo)
         {
             auto table = parseObjectNameFromKey(kfvKey(kfv), 0);
@@ -130,12 +131,12 @@ void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple
                     auto &value = fvValue(fv);
                     SWSS_LOG_DEBUG("Processing table %s field:%s, value:%s", table.c_str(), field.c_str(), value.c_str());
                     if (fvField(fv) == "gearbox_model")
-                        m_identifyGearboxModel = fvValue(fv);
+                        gearboxModel = fvValue(fv);
                 }
             }
         }
 
-        m_identifyGearboxDelay = m_gearboxDelay[m_identifyGearboxModel];
+        m_identifyGearboxDelay = m_gearboxDelay[gearboxModel];
         m_supportGearbox = false;
     }
 }

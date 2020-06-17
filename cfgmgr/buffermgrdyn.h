@@ -109,32 +109,23 @@ private:
     std::shared_ptr<DBConnector> m_applDb = nullptr;
     SelectableTimer *m_timerWaitPortInitDone = nullptr;
 
-    // CONFIG_DB tables
+    // PORT and CABLE_LENGTH table and caches
     Table m_cfgPortTable;
     Table m_cfgCableLenTable;
-    Table m_cfgBufferProfileTable;
-    Table m_cfgBufferPgTable;
-    Table m_cfgLosslessPgPoolTable;
-    Table m_cfgDefaultLosslessBufferParam;
+    // m_portInfoLookup
+    // key: port name
+    // updated only when a port's speed and cable length updated
+    port_info_lookup_t m_portInfoLookup;
 
-    // STATE_DB tables
-    Table m_stateBufferMaximumTable;
-    Table m_stateBufferPoolTable;
-    Table m_stateBufferProfileTable;
-
-    // APPL_DB tables
-    ProducerStateTable m_applBufferProfileTable;
-    ProducerStateTable m_applBufferPgTable;
+    // BUFFER_POOL table and cache
     ProducerStateTable m_applBufferPoolTable;
-    ProducerStateTable m_applBufferQueueTable;
-    ProducerStateTable m_applBufferIngressProfileListTable;
-    ProducerStateTable m_applBufferEgressProfileListTable;
-
-    Table m_applPortTable;
-
-    // Internal maps
-    // m_bufferPoolLookup - the cache for the buffer pool
+    Table m_stateBufferPoolTable;
     buffer_pool_lookup_t m_bufferPoolLookup;
+
+    // BUFFER_PROFILE table and caches
+    ProducerStateTable m_applBufferProfileTable;
+    Table m_cfgBufferProfileTable;
+    Table m_stateBufferProfileTable;
     // m_bufferProfileLookup - the cache for the following set:
     // 1. CFG_BUFFER_PROFILE
     // 2. Dynamically calculated headroom info stored in APPL_BUFFER_PROFILE
@@ -143,15 +134,10 @@ private:
     // A set where the ignored profiles are stored.
     // A PG that reference an ignored profile should also be ignored.
     std::set<std::string> m_bufferProfileIgnored;
-    // m_portInfoLookup
-    // key: port name
-    // updated only when a port's speed and cable length updated
-    port_info_lookup_t m_portInfoLookup;
-    // m_profileToPortMap - a lookup table from profile name to pgs referencing it
-    // key: profile name, value: a set of PGs.
-    // An element will be added or removed when a PG added or removed
-    // The set which is indexed by profile will be removed or added if the profile is removed or added
-    profile_port_lookup_t m_profileToPortMap;
+
+    // BUFFER_PG table and caches
+    ProducerStateTable m_applBufferPgTable;
+    Table m_cfgBufferPgTable;
     // m_portPgLookup - the cache for CFG_BUFFER_PG and APPL_BUFFER_PG
     // 1st level key: port name, 2nd level key: PGs
     // Updated in:
@@ -159,9 +145,27 @@ private:
     // 2. doSpeedOrCableLengthUpdateTask, speed/cable length updated
     port_pg_lookup_t m_portPgLookup;
 
+    // Other tables
+    Table m_cfgLosslessPgPoolTable;
+    Table m_cfgDefaultLosslessBufferParam;
+
+    Table m_stateBufferMaximumTable;
+
+    ProducerStateTable m_applBufferQueueTable;
+    ProducerStateTable m_applBufferIngressProfileListTable;
+    ProducerStateTable m_applBufferEgressProfileListTable;
+
+    Table m_applPortTable;
+
+    // Internal maps
+    // m_profileToPortMap - a lookup table from profile name to pgs referencing it
+    // key: profile name, value: a set of PGs.
+    // An element will be added or removed when a PG added or removed
+    // The set which is indexed by profile will be removed or added if the profile is removed or added
+    profile_port_lookup_t m_profileToPortMap;
+
     bool m_supportGearbox;
     gearbox_delay_t m_gearboxDelay;
-    std::string m_identifyGearboxModel;
     std::string m_identifyGearboxDelay;
 
     // Vendor specific lua plugins for calculating headroom and buffer pool
