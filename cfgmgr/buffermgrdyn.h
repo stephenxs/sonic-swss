@@ -19,6 +19,7 @@ namespace swss {
 typedef struct {
     bool ingress;
     bool dynamic_size;
+    bool initialized;
     std::string total_size;
     std::string mode;
     std::string xoff;

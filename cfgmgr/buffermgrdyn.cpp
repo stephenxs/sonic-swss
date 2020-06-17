@@ -270,12 +270,19 @@ void BufferMgrDynamic::recalculateSharedBufferPool()
         {
             auto pairs = tokenize(i, ':');
             auto poolName = pairs[0];
-            auto pool = m_bufferPoolLookup[pairs[0]];
-            auto create = pool.total_size.empty();
+            auto &pool = m_bufferPoolLookup[pairs[0]];
 
             pool.total_size = pairs[1];
 
-            updateBufferPoolToDb(poolName, pool, create);
+            if (pool.initialized)
+            {
+                updateBufferPoolToDb(poolName, pool, false);
+            }
+            else
+            {
+                updateBufferPoolToDb(poolName, pool, true);
+                pool.initialized = true;
+            }
 
             SWSS_LOG_NOTICE("Buffer pool %s had been updated with new size [%s]", poolName.c_str(), pool.total_size.c_str());
         }
@@ -327,6 +334,8 @@ void BufferMgrDynamic::updateBufferPoolToDb(const string &name, const buffer_poo
             fvVector.emplace_back(make_pair("type", "egress"));
 
         fvVector.emplace_back(make_pair("mode", pool.mode));
+
+        SWSS_LOG_INFO("Buffer pool %s is initialized", name.c_str());
     }
 
     fvVector.emplace_back(make_pair("size", pool.total_size));
@@ -1076,6 +1085,7 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(Consumer &consumer)
         // 2. Record the table in the internal cache m_bufferPoolLookup
         buffer_pool_t &bufferPool = m_bufferPoolLookup[pool];
 
+        bufferPool.initialized = false;
         bufferPool.dynamic_size = true;
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
@@ -1114,6 +1124,7 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(Consumer &consumer)
         }
         else
         {
+            bufferPool.initialized = true;
             m_applBufferPoolTable.set(pool, fvVector);
             m_stateBufferPoolTable.set(pool, fvVector);
         }
