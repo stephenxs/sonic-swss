@@ -6,12 +6,11 @@ local config_db = "4"
 local state_db = "6"
 
 local lossypg_reserved = 18 * 1024
--- local egress_perport_reserve = 9 * 1024
 
 local result = {}
 local profiles = {}
 
-local count_shutdown_port = 0
+local count_up_port = 0
 local num_ports = 0
 local debug = tonumber(ARGV[1])
 
@@ -58,15 +57,25 @@ local function iterate_all_items(all_items)
                     size = 1 + tonumber(string.sub(range, -1)) - tonumber(string.sub(range, 1, 1))
                 end
                 profiles[index][2] = profiles[index][2] + size
-            else
-                admin_down_ports = admin_down_ports + 1
             end
         end
     end
-    return admin_down_ports
 end
 
--- Connect to APPL_DB
+-- Connect to CONFIG_DB
+redis.call('SELECT', config_db)
+
+local ports_table = redis.call('KEYS', 'PORT|*')
+local num_ports = #ports_table
+
+for i = 1, #ports_table do
+    local status = redis.call('HGET', ports_table[i], 'admin_status')
+    if status == "up" then
+        count_up_port = count_up_port + 1
+    end
+end
+
+-- Switch to APPL_DB
 redis.call('SELECT', appl_db)
 
 -- Fetch names of all profiles and insert them into the look up table
@@ -79,8 +88,10 @@ end
 local all_pgs = redis.call('KEYS', 'BUFFER_PG*')
 local all_tcs = redis.call('KEYS', 'BUFFER_QUEUE*')
 
-count_shutdown_port = iterate_all_items(all_pgs)
+iterate_all_items(all_pgs)
 iterate_all_items(all_tcs)
+
+local statistics = {}
 
 -- Fetch sizes of all of the profiles, accumulate them
 local accumulative_occupied_buffer = 0
@@ -91,9 +102,13 @@ for i = 1, #profiles, 1 do
             if profiles[i][1] == "BUFFER_PROFILE:ingress_lossy_profile" then
                 size = size + lossypg_reserved
             end
+            if profiles[i][1] == "BUFFER_PROFILE:egress_lossy_profile" then
+                profiles[i][2] = count_up_port
+            end
             if size ~= 0 then
                 accumulative_occupied_buffer = accumulative_occupied_buffer + size * profiles[i][2]
             end
+            table.insert(statistics, {profiles[i][1], size, profiles[i][2]})
         end
     end
 end
@@ -114,9 +129,6 @@ redis.call('SELECT', config_db)
 
 local ports_table = redis.call('KEYS', 'PORT|*')
 local num_ports = #ports_table
-
--- accumulative_occupied_buffer = accumulative_occupied_buffer + egress_perport_reserve * (num_ports - count_shutdown_port)
-mmu_size = mmu_size - accumulative_occupied_buffer
 
 -- Fetch all the pools that need update
 local pools_need_update = {}
@@ -154,9 +166,10 @@ for i = 1, #pools_need_update, 1 do
     table.insert(result, pool_name .. ":" .. math.ceil(pool_size))
 end
 
-if debug ~= nil then
-    table.insert(result, "total memory" .. ":" .. mmu_size)
-    table.insert(result, "accumulative reserved" .. ":" .. accumulative_occupied_buffer)
+table.insert(result, "debug:mmu_size:" .. mmu_size)
+table.insert(result, "debug:accumulative:" .. accumulative_occupied_buffer)
+for i = 1, #statistics do
+    table.insert(result, "debug:" .. statistics[i][1] .. ":" .. statistics[i][2] .. ":" .. statistics[i][3])
 end
 
 return result

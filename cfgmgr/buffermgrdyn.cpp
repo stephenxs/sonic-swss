@@ -271,21 +271,32 @@ void BufferMgrDynamic::recalculateSharedBufferPool()
         {
             auto pairs = tokenize(i, ':');
             auto poolName = pairs[0];
-            auto &pool = m_bufferPoolLookup[pairs[0]];
 
-            pool.total_size = pairs[1];
-
-            if (pool.initialized)
+            if ("debug" != poolName)
             {
-                updateBufferPoolToDb(poolName, pool, false);
+                auto &pool = m_bufferPoolLookup[pairs[0]];
+
+                if (pool.total_size == pairs[1])
+                    continue;
+
+                pool.total_size = pairs[1];
+
+                if (pool.initialized)
+                {
+                    updateBufferPoolToDb(poolName, pool, false);
+                }
+                else
+                {
+                    updateBufferPoolToDb(poolName, pool, true);
+                    pool.initialized = true;
+                }
+
+                SWSS_LOG_NOTICE("Buffer pool %s had been updated with new size [%s]", poolName.c_str(), pool.total_size.c_str());
             }
             else
             {
-                updateBufferPoolToDb(poolName, pool, true);
-                pool.initialized = true;
+                SWSS_LOG_INFO("Buffer pool debug info %s", i.c_str());
             }
-
-            SWSS_LOG_NOTICE("Buffer pool %s had been updated with new size [%s]", poolName.c_str(), pool.total_size.c_str());
         }
     }
     catch (...)
@@ -304,7 +315,6 @@ void BufferMgrDynamic::checkSharedBufferPoolSize()
         if (m_applPortTable.get("PortInitDone", values))
         {
             m_portInitDone = true;
-            m_timerWaitPortInitDone->stop();
         }
         else
         {
@@ -1579,10 +1589,14 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
 void BufferMgrDynamic::doTask(SelectableTimer &timer)
 {
     vector<FieldValueTuple> values;
-    if (m_applPortTable.get("PortInitDone", values))
+    if (m_portInitDone)
+    {
+        SWSS_LOG_NOTICE("Buffer pools size audit");
+        recalculateSharedBufferPool();
+    }
+    else if (m_applPortTable.get("PortInitDone", values))
     {
         m_portInitDone = true;
-        timer.stop();
         SWSS_LOG_NOTICE("Buffer pools start to be updated");
         recalculateSharedBufferPool();
     }
