@@ -16,6 +16,11 @@ local ret = {}
 redis.call('SELECT', state_db)
 
 local asic_keys = redis.call('KEYS', 'BUFFER_MAX_PARAM*')
+if #asic_keys == 0 then
+    table.insert(ret, "result:true")
+    return ret
+end
+
 local max_headroom_size = tonumber(redis.call('HGET', asic_keys[1], 'max_headroom_size'))
 if max_headroom_size == nil then
     table.insert(ret, "result:true")

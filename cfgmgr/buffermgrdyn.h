@@ -183,8 +183,7 @@ private:
     std::string m_defaultReservedSize;
 
     // Initializers
-    void initTableHandlerMapFirstStage();
-    void initTableHandlerMapFull();
+    void initTableHandlerMap();
     void parseGearboxInfo(std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
 
     // Tool functions to parse keys and references

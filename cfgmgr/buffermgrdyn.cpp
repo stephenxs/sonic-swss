@@ -52,7 +52,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     SWSS_LOG_ENTER();
 
     // Initialize the handler map
-    initTableHandlerMapFirstStage();
+    initTableHandlerMap();
     parseGearboxInfo(gearboxInfo);
     m_fullStart = false;
 
@@ -141,13 +141,9 @@ void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple
     }
 }
 
-void BufferMgrDynamic::initTableHandlerMapFirstStage()
+void BufferMgrDynamic::initTableHandlerMap()
 {
     m_bufferTableHandlerMap.insert(buffer_handler_pair(STATE_BUFFER_MAXIMUM_VALUE_TABLE, &BufferMgrDynamic::handleBufferMaxParam));
-}
-
-void BufferMgrDynamic::initTableHandlerMapFull()
-{
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_DEFAULT_LOSSLESS_BUFFER_PARAMETER, &BufferMgrDynamic::handleDefaultLossLessBufferParam));
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_POOL_TABLE_NAME, &BufferMgrDynamic::handleBufferPoolTable));
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PROFILE_TABLE_NAME, &BufferMgrDynamic::handleBufferProfileTable));
@@ -314,22 +310,31 @@ void BufferMgrDynamic::checkSharedBufferPoolSize()
         vector<FieldValueTuple> values;
         if (m_applPortTable.get("PortInitDone", values))
         {
+            SWSS_LOG_NOTICE("Buffer pools start to be updated");
             m_portInitDone = true;
         }
         else
         {
             if (m_firstTimeCalculateBufferPool)
             {
-                recalculateSharedBufferPool();
-                m_firstTimeCalculateBufferPool = false;
-                SWSS_LOG_NOTICE("Buffer pool update defered because port is still under initialization, start polling timer");
+                if (m_mmuSize.empty())
+                {
+                    SWSS_LOG_NOTICE("Buffer pool can't be initialized, waiting for mmuSize");
+                }
+                else
+                {
+                    recalculateSharedBufferPool();
+                    m_firstTimeCalculateBufferPool = false;
+                    SWSS_LOG_NOTICE("Buffer pool update defered because port is still under initialization, start polling timer");
+                }
             }
 
             return;
         }
     }
 
-    recalculateSharedBufferPool();
+    if (!m_mmuSize.empty())
+        recalculateSharedBufferPool();
 }
 
 // For buffer pool, only size can be updated on-the-fly
@@ -882,7 +887,6 @@ task_process_status BufferMgrDynamic::handleBufferMaxParam(Consumer &consumer)
             {
                 m_mmuSize = fvValue(i);
                 SWSS_LOG_DEBUG("Handling Default Lossless Buffer Param table field mmu_size %s", m_mmuSize.c_str());
-                initTableHandlerMapFull();
             }
         }
     }
@@ -1123,17 +1127,7 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(Consumer &consumer)
             fvVector.emplace_back(FieldValueTuple(field, value));
             SWSS_LOG_INFO("Inserting BUFFER_POOL table field %s value %s", field.c_str(), value.c_str());
         }
-        if (bufferPool.dynamic_size)
-        {
-            if (m_mmuSize.empty())
-            {
-                // A buffer pool with full size should always be created
-                // otherwise the following objects, like profile, can't be created.
-                SWSS_LOG_NOTICE("MMU size must be initialized first");
-                return task_process_status::task_need_retry;
-            }
-        }
-        else
+        if (!bufferPool.dynamic_size)
         {
             bufferPool.initialized = true;
             m_applBufferPoolTable.set(pool, fvVector);
@@ -1587,20 +1581,5 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
 
 void BufferMgrDynamic::doTask(SelectableTimer &timer)
 {
-    vector<FieldValueTuple> values;
-    if (m_portInitDone)
-    {
-        SWSS_LOG_NOTICE("Buffer pools size audit");
-        recalculateSharedBufferPool();
-    }
-    else if (m_applPortTable.get("PortInitDone", values))
-    {
-        m_portInitDone = true;
-        SWSS_LOG_NOTICE("Buffer pools start to be updated");
-        recalculateSharedBufferPool();
-    }
-    else
-    {
-        SWSS_LOG_NOTICE("Buffer pools: still waiting for PortInitDone");
-    }
+    checkSharedBufferPoolSize();
 }
