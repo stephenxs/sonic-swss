@@ -1164,14 +1164,14 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
     string op = kfvOp(tuple);
     vector<FieldValueTuple> fvVector;
 
-    buffer_profile_t profileApp;
-
     SWSS_LOG_DEBUG("processing command:%s BUFFER_PROFILE table key %s", op.c_str(), profileName.c_str());
     if (op == SET_COMMAND)
     {
         //For set command:
         //1. Create the corresponding table entries in APPL_DB
         //2. Record the table in the internal cache m_bufferProfileLookup
+        buffer_profile_t profileApp;
+
         profileApp.static_configured = true;
         profileApp.dynamic_calculated = false;
         profileApp.lossless = false;
@@ -1276,11 +1276,10 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
             SWSS_LOG_WARN("BUFFER_PROFILE %s is referenced and cannot be removed for now", profileName.c_str());
             return task_process_status::task_need_retry;
         }
-        if (!profileApp.dynamic_calculated)
-        {
-            m_applBufferProfileTable.del(profileName);
-            m_stateBufferProfileTable.del(profileName);
-        }
+
+        m_applBufferProfileTable.del(profileName);
+        m_stateBufferProfileTable.del(profileName);
+
         m_bufferProfileLookup.erase(profileName);
         m_bufferProfileIgnored.erase(profileName);
     }
