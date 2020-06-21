@@ -361,7 +361,7 @@ void BufferMgrDynamic::updateBufferPoolToDb(const string &name, const buffer_poo
     m_stateBufferPoolTable.set(name, fvVector);
 }
 
-void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_profile_t &profile)
+void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_profile_t &profile, bool state_db_only = false)
 {
     vector<FieldValueTuple> fvVector;
     string mode = getPgPoolMode();
@@ -388,8 +388,15 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
     fvVector.emplace_back(make_pair("size", profile.size));
     fvVector.emplace_back(make_pair(mode, profile.threshold));
 
-    m_applBufferProfileTable.set(name, fvVector);
+    if (!state_db_only)
+    {
+        m_applBufferProfileTable.set(name, fvVector);
+    }
 
+    if (profile.state == PROFILE_STALE)
+    {
+        fvVector.emplace_back(make_pair("gc_timeout", to_string(profile.stale_timeout*WAIT_FOR_PORT_INIT_DONE_TIMER)));
+    }
     m_stateBufferProfileTable.set(name, fvVector);
 }
 
@@ -433,7 +440,7 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
     // check if profile already exists - if yes - skip creation
     auto profileRef = m_bufferProfileLookup.find(buffer_profile_key);
     if (profileRef == m_bufferProfileLookup.end()
-        || profileRef->second.xoff.empty())
+        || profileRef->second.state == PROFILE_INITIALIZING)
     {
         auto &profile = m_bufferProfileLookup[buffer_profile_key];
         SWSS_LOG_NOTICE("Creating new profile '%s'", buffer_profile_key.c_str());
@@ -443,6 +450,7 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
         calculateHeadroomSize(speed, cable, gearbox_model, profile);
 
         profile.name = buffer_profile_key;
+        profile.state = PROFILE_NORMAL;
 
         updateBufferProfileToDb(buffer_profile_key, profile);
 
@@ -451,6 +459,14 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
                        buffer_profile_key.c_str(),
                        speed.c_str(), cable.c_str(), gearbox_model.c_str(),
                        profile.xon.c_str(), profile.xoff.c_str(), profile.size.c_str());
+    }
+    else if (profileRef->second.state == PROFILE_STALE)
+    {
+        auto &profile = profileRef->second;
+        SWSS_LOG_NOTICE("BUFFER_PROFILE %s is in STALE state, reuse it", profile_name.c_str());
+        profile.state = PROFILE_NORMAL;
+        profile.stale_timeout = 0;
+        updateBufferProfileToDb(buffer_profile_key, profile, true);
     }
     else
     {
@@ -462,14 +478,15 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
     return task_process_status::task_success;
 }
 
-void BufferMgrDynamic::releaseProfile(const string &profile_name)
+void BufferMgrDynamic::markProfileToBeReleased(const string &profile_name)
 {
     // Crete record in BUFFER_PROFILE table
     // key format is pg_lossless_<speed>_<cable>_profile
     string buffer_profile_key;
     vector<FieldValueTuple> fvVector;
+    auto &profile = m_bufferProfileLookup[profile_name];
 
-    if (m_bufferProfileLookup[profile_name].static_configured)
+    if (profile.static_configured)
     {
         // Check whether the profile is statically configured.
         // This means:
@@ -481,12 +498,39 @@ void BufferMgrDynamic::releaseProfile(const string &profile_name)
         return;
     }
 
+    if (profile.state == PROFILE_STALE)
+    {
+        SWSS_LOG_INFO("BUFFER_PROFILE %s is already in STALE state when markRelease", profile_name.c_str());
+        return;
+    }
+
     // Check whether it's referenced anymore by other PGs.
     if (!m_profileToPortMap[profile_name].empty())
     {
-//        auto firstRef = m_profileToPortMap[profile_name].begin();
-        SWSS_LOG_INFO("Unable to release profile %s because it's still referenced by %s (and others)",
-                      profile_name.c_str(), "unknown"/*firstRef.c_str()*/);
+        for (auto &pg : m_profileToPortMap[profile_name])
+        {
+            SWSS_LOG_INFO("Unable to release profile %s because it's still referenced by %s (and others)",
+                          profile_name.c_str(), pg.c_str());
+            break;
+        }
+        return;
+    }
+
+    profile.state = PROFILE_STALE;
+    profile.stale_timeout = PROFILE_STALE_TIMEOUT;
+    SWSS_LOG_INFO("BUFFER_PROFILE %s enters STALE state", profile_name.c_str());
+
+    updateBufferProfileToDb(profile_name, profile, true);
+}
+
+void BufferMgrDynamic::releaseProfile(buffer_profile_t &profile)
+{
+    const string &profile_name = profile.name;
+
+    if (--profile.stale_timeout > 0)
+    {
+        SWSS_LOG_INFO("BUFFER_PROFILE %s is STALE %d", profile_name.c_str(), profile.stale_timeout);
+        updateBufferProfileToDb(profile_name, profile, true);
         return;
     }
 
@@ -496,10 +540,28 @@ void BufferMgrDynamic::releaseProfile(const string &profile_name)
 
     m_stateBufferProfileTable.del(profile_name);
 
-    // Remove the profile from the internal cache
-    m_bufferProfileLookup.erase(profile_name);
+    // Don't remove profile within iteration. Mark them instead, and then remove them outside the iteration
+    m_bufferProfilePendingRemoved.insert(profile_name);
 
     SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been released successfully", profile_name.c_str());
+}
+
+void BufferMgrDynamic::checkPendingRemovedProfiles()
+{
+    for (auto &it : m_bufferProfileLookup)
+    {
+        auto &profile = it.second;
+
+        if (profile.state == PROFILE_STALE)
+            releaseProfile(profile);
+    }
+
+    for (auto &profileName : m_bufferProfilePendingRemoved)
+    {
+        m_bufferProfileLookup.erase(profileName);
+    }
+
+    m_bufferProfilePendingRemoved.clear();
 }
 
 bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, buffer_profile_t &profile_info, string lossy_pg_changed = "")
@@ -642,7 +704,7 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(const strin
 
     //Remove the old profile which is probably not referenced anymore.
     if (!oldProfile.empty() && oldProfile != newProfile)
-        releaseProfile(oldProfile);
+        markProfileToBeReleased(oldProfile);
 
     return task_process_status::task_success;
 }
@@ -724,7 +786,7 @@ task_process_status BufferMgrDynamic::doRemovePgTask(const string &pg_key)
     string null_str("");
     updateBufferPgToDb(pg_key, null_str, false);
 
-    SWSS_LOG_NOTICE("Remove BUFFER_PG for %s to profile %s", pg_key.c_str(), portInfo.profile_name.c_str());
+    SWSS_LOG_NOTICE("Remove BUFFER_PG %s (profile %s)", pg_key.c_str(), portInfo.profile_name.c_str());
 
     // recalculate pool size
     checkSharedBufferPoolSize();
@@ -1169,6 +1231,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         profileApp.static_configured = true;
         profileApp.dynamic_calculated = false;
         profileApp.lossless = false;
+        profileApp.state = PROFILE_INITIALIZING;
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
             string &field = fvField(*i);
@@ -1243,6 +1306,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
             }
             else
             {
+                profileApp.state = PROFILE_NORMAL;
                 doUpdateStaticProfileTask(profileName, profileApp);
                 SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been inserted into APPL_DB", profileName.c_str());
                 SWSS_LOG_DEBUG("BUFFER_PROFILE %s for headroom override has been stored internally: [pool %s xon %s xoff %s size %s]",
@@ -1582,4 +1646,5 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
 void BufferMgrDynamic::doTask(SelectableTimer &timer)
 {
     checkSharedBufferPoolSize();
+    checkPendingRemovedProfiles();
 }

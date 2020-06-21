@@ -25,7 +25,28 @@ typedef struct {
     std::string xoff;
 } buffer_pool_t;
 
+// State of the profile.
+// We maintain state for dynamic profiles only
+// INITIALIZING state indicates a profile is under initializing
+// NORMAL state indicates that profile is working normally
+// A profile's state will be STALE When it is no longer referenced
+// It will be removed after having been in this state for 1 minute
+// This deferred mechanism yields two benefits
+// 1. Avoid frequently removing/re-adding a profile
+// 2. Avoid removing profile failure if orchagent handles BUFFER_PG
+//    and BUFFER_PROFILE tables in an order which differs from which
+//    buffermgrd calls
+typedef enum {
+    PROFILE_INITIALIZING,
+    PROFILE_NORMAL,
+    PROFILE_STALE
+} profile_state_t;
+
+#define PROFILE_STALE_TIMEOUT 6
+
 typedef struct {
+    profile_state_t state;
+    int stale_timeout;
     bool dynamic_calculated;
     bool static_configured;
     bool ingress;
@@ -134,6 +155,7 @@ private:
     // A set where the ignored profiles are stored.
     // A PG that reference an ignored profile should also be ignored.
     std::set<std::string> m_bufferProfileIgnored;
+    std::set<std::string> m_bufferProfilePendingRemoved;
 
     // BUFFER_PG table and caches
     ProducerStateTable m_applBufferPgTable;
@@ -195,7 +217,7 @@ private:
 
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool, bool create);
-    void updateBufferProfileToDb(const std::string &name, const buffer_profile_t &profile);
+    void updateBufferProfileToDb(const std::string &name, const buffer_profile_t &profile, bool state_db_only);
     void updateBufferPgToDb(const std::string &key, const std::string &profile, bool add);
 
     // Meta flows
@@ -203,7 +225,9 @@ private:
     void checkSharedBufferPoolSize();
     void recalculateSharedBufferPool();
     task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &gearbox_model, std::string &profile_name);
-    void releaseProfile(const std::string &profile_name);
+    void markProfileToBeReleased(const std::string &profile_name);
+    void releaseProfile(buffer_profile_t &profile);
+    void checkPendingRemovedProfiles();
     bool isHeadroomResourceValid(const std::string &port, buffer_profile_t &profile_info, std::string lossy_pg_changed);
 
     // Main flows
