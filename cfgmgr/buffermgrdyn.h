@@ -14,7 +14,7 @@ namespace swss {
 #define INGRESS_LOSSLESS_PG_POOL_NAME "ingress_lossless_pool"
 #define LOSSLESS_PGS "3-4"
 
-#define WAIT_FOR_PORT_INIT_DONE_TIMER 10
+#define BUFFERMGR_TIMER_PERIOD 10
 
 typedef struct {
     bool ingress;
@@ -128,7 +128,7 @@ private:
     bool m_warmStart;
 
     std::shared_ptr<DBConnector> m_applDb = nullptr;
-    SelectableTimer *m_timerWaitPortInitDone = nullptr;
+    SelectableTimer *m_buffermgrPeriodtimer = nullptr;
 
     // PORT and CABLE_LENGTH table and caches
     Table m_cfgPortTable;

@@ -6,9 +6,11 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
+#include "timer.h"
 #include "buffermgr.h"
 #include "exec.h"
 #include "shellcmd.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -28,6 +30,19 @@ BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *appl
         m_applBufferEgressProfileListTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)
 {
     readPgProfileLookupFile(pg_lookup_file);
+
+    // Init timer
+    auto interv = timespec { .tv_sec = BUFFERMGR_TIMER_PERIOD, .tv_nsec = 0 };
+    m_buffermgrPeriodtimer = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(m_buffermgrPeriodtimer, this, "PORT_INIT_DONE_POLL_TIMER");
+    Orch::addExecutor(executor);
+    m_buffermgrPeriodtimer->start();
+
+    // Warm start initialization
+    WarmStart::initialize("buffermgrd", "swss");
+    WarmStart::checkWarmStart("buffermgrd", "swss");
+
+    m_warmStart = WarmStart::isWarmStart();
 }
 
 //# speed, cable, size,    xon,  xoff, threshold,  xon_offset

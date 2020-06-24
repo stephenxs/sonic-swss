@@ -83,11 +83,11 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     }
 
     // Init timer
-    auto interv = timespec { .tv_sec = WAIT_FOR_PORT_INIT_DONE_TIMER, .tv_nsec = 0 };
-    m_timerWaitPortInitDone = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(m_timerWaitPortInitDone, this, "PORT_INIT_DONE_POLL_TIMER");
+    auto interv = timespec { .tv_sec = BUFFERMGR_TIMER_PERIOD, .tv_nsec = 0 };
+    m_buffermgrPeriodtimer = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(m_buffermgrPeriodtimer, this, "PORT_INIT_DONE_POLL_TIMER");
     Orch::addExecutor(executor);
-    m_timerWaitPortInitDone->start();
+    m_buffermgrPeriodtimer->start();
 
     // Warm start initialization
     WarmStart::initialize("buffermgrd", "swss");
@@ -361,6 +361,16 @@ void BufferMgrDynamic::updateBufferPoolToDb(const string &name, const buffer_poo
 
     m_applBufferPoolTable.set(name, fvVector);
 
+    if (!create)
+    {
+        if (pool.ingress)
+            fvVector.emplace_back(make_pair("type", "ingress"));
+        else
+            fvVector.emplace_back(make_pair("type", "egress"));
+
+        fvVector.emplace_back(make_pair("mode", pool.mode));
+    }
+
     m_stateBufferPoolTable.set(name, fvVector);
 }
 
@@ -410,7 +420,7 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
 
     if (profile.state == PROFILE_STALE)
     {
-        fvVector.emplace_back(make_pair("gc_timeout", to_string(profile.stale_timeout*WAIT_FOR_PORT_INIT_DONE_TIMER)));
+        fvVector.emplace_back(make_pair("gc_timeout", to_string(profile.stale_timeout*BUFFERMGR_TIMER_PERIOD)));
     }
     m_stateBufferProfileTable.set(name, fvVector);
 }
