@@ -123,9 +123,9 @@ private:
 
     buffer_table_handler_map m_bufferTableHandlerMap;
 
-    bool m_fullStart;
     bool m_portInitDone;
     bool m_firstTimeCalculateBufferPool;
+    bool m_warmStart;
 
     std::shared_ptr<DBConnector> m_applDb = nullptr;
     SelectableTimer *m_timerWaitPortInitDone = nullptr;
@@ -242,7 +242,6 @@ private:
     // Table update handlers
     task_process_status handleBufferMaxParam(Consumer &consumer);
     task_process_status handleDefaultLossLessBufferParam(Consumer &consumer);
-    task_process_status handleBufferInitializationState(Consumer &consumer);
     task_process_status handleCableLenTable(Consumer &consumer);
     task_process_status handlePortTable(Consumer &consumer);
     task_process_status handleBufferPoolTable(Consumer &consumer);

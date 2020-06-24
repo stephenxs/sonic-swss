@@ -12,6 +12,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include "schema.h"
+#include "warm_restart.h"
 
 /*
  * Some Tips
@@ -45,7 +46,6 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_stateBufferPoolTable(stateDb, STATE_BUFFER_POOL_TABLE_NAME),
         m_stateBufferProfileTable(stateDb, STATE_BUFFER_PROFILE_TABLE_NAME),
         m_applPortTable(applDb, APP_PORT_TABLE_NAME),
-        m_fullStart(false),
         m_portInitDone(false),
         m_firstTimeCalculateBufferPool(true)
 {
@@ -54,7 +54,6 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     // Initialize the handler map
     initTableHandlerMap();
     parseGearboxInfo(gearboxInfo);
-    m_fullStart = false;
 
     string platform = getenv("ASIC_VENDOR") ? getenv("ASIC_VENDOR") : "";
     if (platform == "")
@@ -89,6 +88,12 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     auto executor = new ExecutableTimer(m_timerWaitPortInitDone, this, "PORT_INIT_DONE_POLL_TIMER");
     Orch::addExecutor(executor);
     m_timerWaitPortInitDone->start();
+
+    // Warm start initialization
+    WarmStart::initialize("buffermgrd", "swss");
+    WarmStart::checkWarmStart("buffermgrd", "swss");
+
+    m_warmStart = WarmStart::isWarmStart();
 }
 
 void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo)
@@ -153,8 +158,6 @@ void BufferMgrDynamic::initTableHandlerMap()
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferMgrDynamic::handleBufferPortEgressProfileListTable));
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_PORT_TABLE_NAME, &BufferMgrDynamic::handlePortTable));
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_PORT_CABLE_LEN_TABLE_NAME, &BufferMgrDynamic::handleCableLenTable));
-
-    m_fullStart = true;
 }
 
 // APIs to handle variant kinds of keys
@@ -379,18 +382,30 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
         m_applBufferProfileTable.getTableNameSeparator() +
         INGRESS_LOSSLESS_PG_POOL_NAME;
 
-    fvVector.emplace_back(make_pair("pool", "[" + pg_pool_reference + "]"));
+    if (!m_warmStart)
+    {
+        // For warm start, entries are already in the database.
+        // To re-add pool and mode will cause SAI complain.
+        fvVector.emplace_back(make_pair("pool", "[" + pg_pool_reference + "]"));
+        fvVector.emplace_back(make_pair(mode, profile.threshold));
+    }
+
     fvVector.emplace_back(make_pair("xon", profile.xon));
     if (!profile.xon_offset.empty()) {
         fvVector.emplace_back(make_pair("xon_offset", profile.xon_offset));
     }
     fvVector.emplace_back(make_pair("xoff", profile.xoff));
     fvVector.emplace_back(make_pair("size", profile.size));
-    fvVector.emplace_back(make_pair(mode, profile.threshold));
 
     if (!state_db_only)
     {
         m_applBufferProfileTable.set(name, fvVector);
+    }
+
+    if (m_warmStart)
+    {
+        fvVector.emplace_back(make_pair("pool", "[" + pg_pool_reference + "]"));
+        fvVector.emplace_back(make_pair(mode, profile.threshold));
     }
 
     if (profile.state == PROFILE_STALE)
@@ -1192,8 +1207,19 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(Consumer &consumer)
         if (!bufferPool.dynamic_size)
         {
             bufferPool.initialized = true;
-            m_applBufferPoolTable.set(pool, fvVector);
+            if (m_warmStart)
+            {
+                SWSS_LOG_NOTICE("BUFFER_POOL %s is already in APPL_DB when starts from warm reboot", pool.c_str());
+            }
+            else
+            {
+                m_applBufferPoolTable.set(pool, fvVector);
+            }
             m_stateBufferPoolTable.set(pool, fvVector);
+        }
+        if (m_warmStart)
+        {
+            bufferPool.initialized = true;
         }
     }
     else if (op == DEL_COMMAND)
@@ -1316,10 +1342,17 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         }
         else
         {
-            m_applBufferProfileTable.set(profileName, fvVector);
+            if (m_warmStart)
+            {
+                SWSS_LOG_NOTICE("BUFFER_PROFILE %s is already in APPL_DB when starts from warm reboot", profileName.c_str());
+            }
+            else
+            {
+                m_applBufferProfileTable.set(profileName, fvVector);
+                SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been inserted into APPL_DB directly", profileName.c_str());
+            }
             m_stateBufferProfileTable.set(profileName, fvVector);
             m_bufferProfileIgnored.insert(profileName);
-            SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been inserted into APPL_DB directly", profileName.c_str());
         }
     }
     else if (op == DEL_COMMAND)
@@ -1608,12 +1641,6 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
 
     if (m_bufferTableHandlerMap.find(table_name) == m_bufferTableHandlerMap.end())
     {
-        if (!m_fullStart)
-        {
-            // Before the asic state has been learnt, we don't handle any other table
-            // All the sync items are stored in the m_toSync of consumers
-            return;
-        }
         SWSS_LOG_ERROR("No handler for key:%s found.", table_name.c_str());
         while (it != consumer.m_toSync.end())
             it = consumer.m_toSync.erase(it);
@@ -1645,6 +1672,11 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
 
 void BufferMgrDynamic::doTask(SelectableTimer &timer)
 {
+    if (m_warmStart)
+    {
+        m_warmStart = false;
+        WarmStart::setWarmStartState("buffermgrd", WarmStart::RECONCILED);
+    }
     checkSharedBufferPoolSize();
     checkPendingRemovedProfiles();
 }
