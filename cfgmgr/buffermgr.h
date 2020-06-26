@@ -50,9 +50,6 @@ private:
 
     bool m_pgfile_processed;
 
-    bool m_warmStart;
-    SelectableTimer *m_buffermgrPeriodtimer = nullptr;
-
     pg_profile_lookup_t m_pgProfileLookup;
     port_cable_length_t m_cableLenLookup;
     std::string getPgPoolMode();

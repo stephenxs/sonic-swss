@@ -125,7 +125,6 @@ private:
 
     bool m_portInitDone;
     bool m_firstTimeCalculateBufferPool;
-    bool m_warmStart;
 
     std::shared_ptr<DBConnector> m_applDb = nullptr;
     SelectableTimer *m_buffermgrPeriodtimer = nullptr;

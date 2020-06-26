@@ -89,11 +89,8 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     Orch::addExecutor(executor);
     m_buffermgrPeriodtimer->start();
 
-    // Warm start initialization
-    WarmStart::initialize("buffermgrd", "swss");
-    WarmStart::checkWarmStart("buffermgrd", "swss");
-
-    m_warmStart = WarmStart::isWarmStart();
+    // Try fetch mmu size from STATE_DB
+    m_stateBufferMaximumTable.hget("global", "mmu_size", m_mmuSize);
 }
 
 void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo)
@@ -320,16 +317,9 @@ void BufferMgrDynamic::checkSharedBufferPoolSize()
         {
             if (m_firstTimeCalculateBufferPool)
             {
-                if (m_mmuSize.empty())
-                {
-                    SWSS_LOG_NOTICE("Buffer pool can't be initialized, waiting for mmuSize");
-                }
-                else
-                {
-                    recalculateSharedBufferPool();
-                    m_firstTimeCalculateBufferPool = false;
-                    SWSS_LOG_NOTICE("Buffer pool update defered because port is still under initialization, start polling timer");
-                }
+                recalculateSharedBufferPool();
+                m_firstTimeCalculateBufferPool = false;
+                SWSS_LOG_NOTICE("Buffer pool update defered because port is still under initialization, start polling timer");
             }
 
             return;
@@ -392,30 +382,18 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
         m_applBufferProfileTable.getTableNameSeparator() +
         INGRESS_LOSSLESS_PG_POOL_NAME;
 
-    if (!m_warmStart)
-    {
-        // For warm start, entries are already in the database.
-        // To re-add pool and mode will cause SAI complain.
-        fvVector.emplace_back(make_pair("pool", "[" + pg_pool_reference + "]"));
-        fvVector.emplace_back(make_pair(mode, profile.threshold));
-    }
-
     fvVector.emplace_back(make_pair("xon", profile.xon));
     if (!profile.xon_offset.empty()) {
         fvVector.emplace_back(make_pair("xon_offset", profile.xon_offset));
     }
     fvVector.emplace_back(make_pair("xoff", profile.xoff));
     fvVector.emplace_back(make_pair("size", profile.size));
+    fvVector.emplace_back(make_pair("pool", "[" + pg_pool_reference + "]"));
+    fvVector.emplace_back(make_pair(mode, profile.threshold));
 
     if (!state_db_only)
     {
         m_applBufferProfileTable.set(name, fvVector);
-    }
-
-    if (m_warmStart)
-    {
-        fvVector.emplace_back(make_pair("pool", "[" + pg_pool_reference + "]"));
-        fvVector.emplace_back(make_pair(mode, profile.threshold));
     }
 
     if (profile.state == PROFILE_STALE)
@@ -469,6 +447,13 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
     {
         auto &profile = m_bufferProfileLookup[buffer_profile_key];
         SWSS_LOG_NOTICE("Creating new profile '%s'", buffer_profile_key.c_str());
+
+        string mode = getPgPoolMode();
+        if (mode.empty())
+        {
+            SWSS_LOG_NOTICE("BUFFER_PROFILE %s cannot be created because the buffer pool isn't ready", buffer_profile_key.c_str());
+            return task_process_status::task_need_retry;
+        }
 
         // Call vendor-specific lua plugin to calculate the xon, xoff, xon_offset, size
         // Pay attention, the threshold can contain valid value
@@ -1217,19 +1202,8 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(Consumer &consumer)
         if (!bufferPool.dynamic_size)
         {
             bufferPool.initialized = true;
-            if (m_warmStart)
-            {
-                SWSS_LOG_NOTICE("BUFFER_POOL %s is already in APPL_DB when starts from warm reboot", pool.c_str());
-            }
-            else
-            {
-                m_applBufferPoolTable.set(pool, fvVector);
-            }
+            m_applBufferPoolTable.set(pool, fvVector);
             m_stateBufferPoolTable.set(pool, fvVector);
-        }
-        if (m_warmStart)
-        {
-            bufferPool.initialized = true;
         }
     }
     else if (op == DEL_COMMAND)
@@ -1352,15 +1326,9 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         }
         else
         {
-            if (m_warmStart)
-            {
-                SWSS_LOG_NOTICE("BUFFER_PROFILE %s is already in APPL_DB when starts from warm reboot", profileName.c_str());
-            }
-            else
-            {
-                m_applBufferProfileTable.set(profileName, fvVector);
-                SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been inserted into APPL_DB directly", profileName.c_str());
-            }
+            m_applBufferProfileTable.set(profileName, fvVector);
+            SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been inserted into APPL_DB directly", profileName.c_str());
+
             m_stateBufferProfileTable.set(profileName, fvVector);
             m_bufferProfileIgnored.insert(profileName);
         }
@@ -1682,11 +1650,6 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
 
 void BufferMgrDynamic::doTask(SelectableTimer &timer)
 {
-    if (m_warmStart)
-    {
-        m_warmStart = false;
-        WarmStart::setWarmStartState("buffermgrd", WarmStart::RECONCILED);
-    }
     checkSharedBufferPoolSize();
     checkPendingRemovedProfiles();
 }

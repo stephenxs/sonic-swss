@@ -75,6 +75,8 @@ for i = 1, #ports_table do
     end
 end
 
+local egress_lossless_pool_size = redis.call('HGET', 'BUFFER_POOL|egress_lossless_pool', 'size')
+
 -- Switch to APPL_DB
 redis.call('SELECT', appl_db)
 
@@ -116,7 +118,12 @@ end
 -- Fetch mmu_size
 redis.call('SELECT', state_db)
 local buffer_param_keys = redis.call('KEYS', 'BUFFER_MAX_PARAM*')
-local mmu_size = tonumber(redis.call('HGET', buffer_param_keys[1], 'mmu_size'))
+local mmu_size
+if #buffer_param_keys ~= 0 then
+    mmu_size = tonumber(redis.call('HGET', buffer_param_keys[1], 'mmu_size'))
+else
+    mmu_size = tonumber(egress_lossless_pool_size)
+end
 local asic_keys = redis.call('KEYS', 'ASIC_TABLE*')
 local cell_size = tonumber(redis.call('HGET', asic_keys[1], 'cell_size'))
 
