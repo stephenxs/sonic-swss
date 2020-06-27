@@ -44,6 +44,7 @@ typedef enum {
 
 #define PROFILE_STALE_TIMEOUT 6
 
+typedef std::set<std::string> port_pg_set_t;
 typedef struct {
     profile_state_t state;
     int stale_timeout;
@@ -58,6 +59,9 @@ typedef struct {
     std::string xoff;
     std::string threshold;
     std::string pool_name;
+    // port_pgs - stores pgs referencing this profile
+    // An element will be added or removed when a PG added or removed
+    port_pg_set_t port_pgs;
 } buffer_profile_t;
 
 typedef struct {
@@ -98,9 +102,6 @@ typedef std::map<std::string, port_info_t> port_info_lookup_t;
 typedef std::map<std::string, buffer_profile_t> buffer_profile_lookup_t;
 //map from name to pool
 typedef std::map<std::string, buffer_pool_t> buffer_pool_lookup_t;
-//profile reference table
-typedef std::set<std::string> port_pg_set_t;
-typedef std::map<std::string, port_pg_set_t> profile_port_lookup_t;
 //port -> headroom override
 typedef std::map<std::string, buffer_profile_t> headroom_override_t;
 //map from pg to info
@@ -177,13 +178,6 @@ private:
     ProducerStateTable m_applBufferEgressProfileListTable;
 
     Table m_applPortTable;
-
-    // Internal maps
-    // m_profileToPortMap - a lookup table from profile name to pgs referencing it
-    // key: profile name, value: a set of PGs.
-    // An element will be added or removed when a PG added or removed
-    // The set which is indexed by profile will be removed or added if the profile is removed or added
-    profile_port_lookup_t m_profileToPortMap;
 
     bool m_supportGearbox;
     gearbox_delay_t m_gearboxDelay;

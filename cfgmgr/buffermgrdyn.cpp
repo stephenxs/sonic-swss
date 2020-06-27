@@ -515,9 +515,9 @@ void BufferMgrDynamic::markProfileToBeReleased(const string &profile_name)
     }
 
     // Check whether it's referenced anymore by other PGs.
-    if (!m_profileToPortMap[profile_name].empty())
+    if (!profile.port_pgs.empty())
     {
-        for (auto &pg : m_profileToPortMap[profile_name])
+        for (auto &pg : profile.port_pgs)
         {
             SWSS_LOG_INFO("Unable to release profile %s because it's still referenced by %s (and others)",
                           profile_name.c_str(), pg.c_str());
@@ -544,7 +544,7 @@ void BufferMgrDynamic::releaseProfile(buffer_profile_t &profile)
         return;
     }
 
-    m_profileToPortMap.erase(profile_name);
+    profile.port_pgs.clear();
 
     m_applBufferProfileTable.del(profile_name);
 
@@ -681,8 +681,8 @@ task_process_status BufferMgrDynamic::doSpeedOrCableLengthUpdateTask(const strin
         {
             // Need to remove the reference to the old profile
             // and create the reference to the new one
-            m_profileToPortMap[oldProfile].erase(key);
-            m_profileToPortMap[newProfile].insert(key);
+            m_bufferProfileLookup[oldProfile].port_pgs.erase(key);
+            m_bufferProfileLookup[newProfile].port_pgs.insert(key);
             SWSS_LOG_DEBUG("Move profile reference for %s from [%s] to [%s]", key.c_str(), oldProfile.c_str(), newProfile.c_str());
 
             // buffer pg needs to be updated as well
@@ -746,7 +746,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, strin
         SWSS_LOG_NOTICE("Set BUFFER_PG for %s to profile %s", pg_key.c_str(), portInfo.profile_name.c_str());
         updateBufferPgToDb(pg_key, portInfo.profile_name, true);
 
-        m_profileToPortMap[portInfo.profile_name].insert(pg_key);
+        m_bufferProfileLookup[portInfo.profile_name].port_pgs.insert(pg_key);
 
         // Recalculate pool size
         checkSharedBufferPoolSize();
@@ -762,7 +762,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, strin
             return task_status;
 
         // On success, the portInfo.profile_name should be updated
-        m_profileToPortMap[portInfo.profile_name].insert(pg_key);
+        m_bufferProfileLookup[portInfo.profile_name].port_pgs.insert(pg_key);
 
         break;
 
@@ -861,7 +861,7 @@ task_process_status BufferMgrDynamic::doUpdateHeadroomOverrideTask(const string 
 
     updateBufferPgToDb(pg_key, profile, true);
 
-    m_profileToPortMap[profile].insert(pg_key);
+    pgProfile.port_pgs.insert(pg_key);
 
     SWSS_LOG_NOTICE("Headroom override %s has been configured on %s", profile.c_str(), pg_key.c_str());
 
@@ -914,7 +914,7 @@ task_process_status BufferMgrDynamic::doRemoveHeadroomOverrideTask(const string 
 
 task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(const string &profileName, buffer_profile_t &profile)
 {
-    auto &profileToMap = m_profileToPortMap[profileName];
+    auto &profileToMap = profile.port_pgs;
     set<string> portsChecked;
 
     for (auto &key : profileToMap)
@@ -1340,7 +1340,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         // Typically, the referencing occurs when headroom override configured
         // Remove it from APPL_DB and internal cache
 
-        if (!m_profileToPortMap[profileName].empty())
+        if (!m_bufferProfileLookup[profileName].port_pgs.empty())
         {
             SWSS_LOG_WARN("BUFFER_PROFILE %s is referenced and cannot be removed for now", profileName.c_str());
             return task_process_status::task_need_retry;
@@ -1459,7 +1459,7 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
         // 2. Update internal caches
         string profileName = bufferPg.profile_name;
 
-        m_profileToPortMap[profileName].erase(key);
+        m_bufferProfileLookup[profileName].port_pgs.erase(key);
 
         if (bufferPg.lossless)
         {
