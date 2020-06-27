@@ -38,6 +38,7 @@ typedef struct {
 //    buffermgrd calls
 typedef enum {
     PROFILE_INITIALIZING,
+    PROFILE_PARTIAL_INITIALIZED,
     PROFILE_NORMAL,
     PROFILE_STALE
 } profile_state_t;

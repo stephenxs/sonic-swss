@@ -240,7 +240,7 @@ void BufferMgrDynamic::calculateHeadroomSize(const string &speed, const string &
                 headroom.size = pairs[1];
             if (pairs[0] == "xon_offset")
                 headroom.xon_offset = pairs[1];
-            if (pairs[0] == "threshold")
+            if (pairs[0] == "threshold" && !headroom.static_configured)
                 headroom.threshold = pairs[1];
         }
     }
@@ -443,7 +443,7 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
     // check if profile already exists - if yes - skip creation
     auto profileRef = m_bufferProfileLookup.find(buffer_profile_key);
     if (profileRef == m_bufferProfileLookup.end()
-        || profileRef->second.state == PROFILE_INITIALIZING)
+        || PROFILE_PARTIAL_INITIALIZED == profileRef->second.state)
     {
         auto &profile = m_bufferProfileLookup[buffer_profile_key];
         SWSS_LOG_NOTICE("Creating new profile '%s'", buffer_profile_key.c_str());
@@ -459,6 +459,11 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
         // Pay attention, the threshold can contain valid value
         calculateHeadroomSize(speed, cable, gearbox_model, profile);
 
+        if (PROFILE_PARTIAL_INITIALIZED != profile.state)
+        {
+            profile.dynamic_calculated = true;
+            profile.static_configured = false;
+        }
         profile.name = buffer_profile_key;
         profile.state = PROFILE_NORMAL;
 
@@ -473,7 +478,7 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
     else if (profileRef->second.state == PROFILE_STALE)
     {
         auto &profile = profileRef->second;
-        SWSS_LOG_NOTICE("BUFFER_PROFILE %s is in STALE state, reuse it", profile_name.c_str());
+        SWSS_LOG_NOTICE("BUFFER_PROFILE %s is in STALE state, reuse it", buffer_profile_key.c_str());
         profile.state = PROFILE_NORMAL;
         profile.stale_timeout = 0;
         updateBufferProfileToDb(buffer_profile_key, profile, true);
@@ -521,9 +526,8 @@ void BufferMgrDynamic::markProfileToBeReleased(const string &profile_name)
         {
             SWSS_LOG_INFO("Unable to release profile %s because it's still referenced by %s (and others)",
                           profile_name.c_str(), pg.c_str());
-            break;
+            return;
         }
-        return;
     }
 
     profile.state = PROFILE_STALE;
@@ -798,12 +802,18 @@ task_process_status BufferMgrDynamic::doRemovePgTask(const string &pg_key)
 
     SWSS_LOG_NOTICE("Remove BUFFER_PG %s (profile %s)", pg_key.c_str(), portInfo.profile_name.c_str());
 
+    if (PORT_DYNAMIC_HEADROOM != portInfo.state)
+    {
+        SWSS_LOG_INFO("Port state isn't DYNAMIC_HEADROOM, no further action");
+        return task_process_status::task_success;
+    }
+
     // recalculate pool size
     checkSharedBufferPoolSize();
 
     // Update port state
     bool dynamic = false;
-    for ( auto it: m_portPgLookup[port])
+    for ( auto &it: m_portPgLookup[port])
     {
         auto &pg = it.second;
         auto &key = it.first;
@@ -813,14 +823,20 @@ task_process_status BufferMgrDynamic::doRemovePgTask(const string &pg_key)
 
         if (pg.dynamic_calculated)
         {
-            dynamic = true;SWSS_LOG_DEBUG("BUFFER_PG: Dynamic profile %s pg %s is still on port %s",pg.profile_name.c_str(), key.c_str(), port.c_str());
+            dynamic = true;
+            SWSS_LOG_DEBUG("BUFFER_PG: Dynamic profile %s pg %s is still on port %s",pg.profile_name.c_str(), key.c_str(), port.c_str());
             break;
         }
     }
-    if (dynamic)
-        portInfo.state = PORT_DYNAMIC_HEADROOM;
-    else
+
+    if (!dynamic)
+    {
         portInfo.state = PORT_READY;
+        SWSS_LOG_NOTICE("No lossless PG configured on port %s anymore, try removing the original profile %s",
+                        port.c_str(), portInfo.profile_name.c_str());
+        markProfileToBeReleased(portInfo.profile_name);
+        portInfo.profile_name = "";
+    }
 
     return task_process_status::task_success;
 }
@@ -1310,9 +1326,28 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         {
             if (profileApp.dynamic_calculated)
             {
-                m_bufferProfileLookup[profileName] = profileApp;
-                SWSS_LOG_NOTICE("Dynamically profile %s won't be deployed to APPL_DB until referenced by a port",
-                                profileName.c_str());
+                auto profileRef = m_bufferProfileLookup.find(profileName);
+                if (profileRef == m_bufferProfileLookup.end())
+                {
+                    profileApp.state = PROFILE_PARTIAL_INITIALIZED;
+                    m_bufferProfileLookup[profileName] = profileApp;
+                    SWSS_LOG_NOTICE("Dynamically profile %s won't be deployed to APPL_DB until referenced by a port",
+                                    profileName.c_str());
+                }
+                else
+                {
+                    auto &profile = profileRef->second;
+                    profile.threshold = profileApp.threshold;
+                    profile.static_configured = true;
+                    if (PROFILE_NORMAL == profile.state)
+                    {
+                        updateBufferProfileToDb(profileName, profile);
+                        SWSS_LOG_NOTICE("Non default threshold configured on dynamically profile %s, update APPL_DB",
+                                        profileName.c_str());
+                    }
+                    // Don't push to db when profile is in other state like
+                    // PARTIAL_INITIALIZED or STALE
+                }
             }
             else
             {
@@ -1340,10 +1375,49 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         // Typically, the referencing occurs when headroom override configured
         // Remove it from APPL_DB and internal cache
 
-        if (!m_bufferProfileLookup[profileName].port_pgs.empty())
+        auto profileRef = m_bufferProfileLookup.find(profileName);
+        if (profileRef != m_bufferProfileLookup.end())
         {
-            SWSS_LOG_WARN("BUFFER_PROFILE %s is referenced and cannot be removed for now", profileName.c_str());
-            return task_process_status::task_need_retry;
+            auto &profile = profileRef->second;
+            if (!profile.port_pgs.empty())
+            {
+                // still being referenced
+                if (profile.static_configured)
+                {
+                    if (profile.dynamic_calculated)
+                    {
+                        // For dynamic calculated profile, we transmit it into pure dynamic profile
+                        vector<string> keys;
+                        profile.static_configured = false;
+                        m_cfgDefaultLosslessBufferParam.getKeys(keys);
+                        if (!keys.empty())
+                        {
+                            m_cfgDefaultLosslessBufferParam.hget(keys[0], "default_dynamic_th", profile.threshold);
+                            SWSS_LOG_WARN("BUFFER_PROFILE %s is updated from static configured to dynamic, threshold %s",
+                                          profileName.c_str(), profile.threshold.c_str());
+                            updateBufferProfileToDb(profileName, profile);
+                            return task_process_status::task_success;
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("BUFFER_PROFILE %s has been updated from static to dynamic but no default threshold configured, threshold %s unchanged",
+                                           profileName.c_str(), profile.threshold.c_str());
+                            return task_process_status::task_failed;
+                        }
+                    }
+                    else
+                    {
+                        // For headroom override, we just wait until all reference removed
+                        SWSS_LOG_WARN("BUFFER_PROFILE %s for headroom override is referenced and cannot be removed for now", profileName.c_str());
+                        return task_process_status::task_need_retry;
+                    }
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Try to remove non-static-configured profile %s", profileName.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+            }
         }
 
         m_applBufferProfileTable.del(profileName);
@@ -1635,7 +1709,7 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
                 return;
             case task_process_status::task_need_retry:
                 SWSS_LOG_INFO("Unable to process table update. Will retry...");
-                ++it;
+                it++;
                 break;
             case task_process_status::task_invalid_entry:
                 SWSS_LOG_ERROR("Failed to process invalid entry, drop it");
