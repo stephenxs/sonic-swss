@@ -928,8 +928,9 @@ task_process_status BufferMgrDynamic::doRemoveHeadroomOverrideTask(const string 
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(const string &profileName, buffer_profile_t &profile)
+task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(buffer_profile_t &profile)
 {
+    const string &profileName = profile.name;
     auto &profileToMap = profile.port_pgs;
     set<string> portsChecked;
 
@@ -944,6 +945,7 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(const string &pr
 
         if (!isHeadroomResourceValid(port, profile))
         {
+            // to do: get the value from application database
             SWSS_LOG_ERROR("BUFFER_PROFILE %s cannot be updated because %s referencing it violates the resource limitation",
                            profileName.c_str(), key.c_str());
             return task_process_status::task_failed;
@@ -953,8 +955,6 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(const string &pr
     }
 
     updateBufferProfileToDb(profileName, profile);
-
-    m_bufferProfileLookup[profileName] = profile;
 
     checkSharedBufferPoolSize();
 
@@ -1252,12 +1252,15 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         //For set command:
         //1. Create the corresponding table entries in APPL_DB
         //2. Record the table in the internal cache m_bufferProfileLookup
-        buffer_profile_t profileApp;
+        buffer_profile_t &profileApp = m_bufferProfileLookup[profileName];
 
         profileApp.static_configured = true;
-        profileApp.dynamic_calculated = false;
-        profileApp.lossless = false;
-        profileApp.state = PROFILE_INITIALIZING;
+        if (PROFILE_INITIALIZING == profileApp.state)
+        {
+            profileApp.dynamic_calculated = false;
+            profileApp.lossless = false;
+            profileApp.name = profileName;
+        }
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
             string &field = fvField(*i);
@@ -1315,7 +1318,10 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
                 profileApp.dynamic_calculated = (value == "dynamic");
                 if (profileApp.dynamic_calculated)
                 {
+                    // For dynamic calculated headroom, user can provide this field only
+                    // We need to supply lossless and ingress
                     profileApp.lossless = true;
+                    profileApp.ingress = true;
                 }
             }
             fvVector.emplace_back(FieldValueTuple(field, value));
@@ -1326,22 +1332,17 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
         {
             if (profileApp.dynamic_calculated)
             {
-                auto profileRef = m_bufferProfileLookup.find(profileName);
-                if (profileRef == m_bufferProfileLookup.end())
+                if (PROFILE_INITIALIZING == profileApp.state)
                 {
                     profileApp.state = PROFILE_PARTIAL_INITIALIZED;
-                    m_bufferProfileLookup[profileName] = profileApp;
                     SWSS_LOG_NOTICE("Dynamically profile %s won't be deployed to APPL_DB until referenced by a port",
                                     profileName.c_str());
                 }
                 else
                 {
-                    auto &profile = profileRef->second;
-                    profile.threshold = profileApp.threshold;
-                    profile.static_configured = true;
-                    if (PROFILE_NORMAL == profile.state)
+                    if (PROFILE_NORMAL == profileApp.state)
                     {
-                        updateBufferProfileToDb(profileName, profile);
+                        updateBufferProfileToDb(profileName, profileApp);
                         SWSS_LOG_NOTICE("Non default threshold configured on dynamically profile %s, update APPL_DB",
                                         profileName.c_str());
                     }
@@ -1352,7 +1353,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consume
             else
             {
                 profileApp.state = PROFILE_NORMAL;
-                doUpdateStaticProfileTask(profileName, profileApp);
+                doUpdateStaticProfileTask(profileApp);
                 SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been inserted into APPL_DB", profileName.c_str());
                 SWSS_LOG_DEBUG("BUFFER_PROFILE %s for headroom override has been stored internally: [pool %s xon %s xoff %s size %s]",
                                profileName.c_str(),

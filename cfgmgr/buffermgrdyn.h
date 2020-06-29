@@ -231,7 +231,7 @@ private:
     task_process_status doUpdateHeadroomOverrideTask(const std::string &pg_key, const std::string &profile);
     task_process_status doRemoveHeadroomOverrideTask(const std::string &pg_key, const std::string &profile);
     task_process_status doAdminStatusTask(const std::string port, const std::string adminStatus);
-    task_process_status doUpdateStaticProfileTask(const std::string &profileName, buffer_profile_t &profile);
+    task_process_status doUpdateStaticProfileTask(buffer_profile_t &profile);
 
     // Table update handlers
     task_process_status handleBufferMaxParam(Consumer &consumer);
