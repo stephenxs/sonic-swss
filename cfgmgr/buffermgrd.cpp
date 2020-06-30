@@ -163,9 +163,9 @@ int main(int argc, char **argv)
                     if (nullptr != db_items_ptr)
                         write_to_state_db(db_items_ptr);
                 }
-            }
 
-            dynamicMode = true;
+                dynamicMode = true;
+            }
         }
 
         if (dynamicMode)
