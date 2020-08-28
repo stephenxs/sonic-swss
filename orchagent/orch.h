@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <map>
+#include <set>
 #include <memory>
 #include <utility>
 
@@ -52,11 +53,21 @@ typedef enum
     task_ignore
 } task_process_status;
 
+typedef struct
+{
+    // m_objsDependingOnMe stores names of all objects depending on the current obj
+    std::set<std::string> m_objsDependingOnMe;
+    // m_objsReferencingByMe is a map from a field of the current object's to the object names it references
+    // multiple objects being referenced are separated by ','
+    std::map<std::string, std::string> m_objsReferencingByMe;
+    sai_object_id_t m_saiObjectId;
+} referenced_object;
+
+typedef std::map<std::string, referenced_object> object_reference_map;
+typedef std::map<std::string, object_reference_map*> type_map;
+
 typedef std::map<std::string, sai_object_id_t> object_map;
 typedef std::pair<std::string, sai_object_id_t> object_map_pair;
-
-typedef std::map<std::string, object_map*> type_map;
-typedef std::pair<std::string, object_map*> type_map_pair;
 
 // Use multimap to support multiple OpFieldsValues for the same key (e,g, DEL and SET)
 // The order of the key-value pairs whose keys compare equivalent is the order of
@@ -212,10 +223,12 @@ protected:
 
     static void logfileReopen();
     std::string dumpTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
-    ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&);
+    ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);
     bool parseIndexRange(const std::string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
     bool parseReference(type_map &type_maps, std::string &ref, std::string &table_name, std::string &object_name);
-    ref_resolve_status resolveFieldRefArray(type_map&, const std::string&, swss::KeyOpFieldsValuesTuple&, std::vector<sai_object_id_t>&);
+    ref_resolve_status resolveFieldRefArray(type_map&, const std::string&, swss::KeyOpFieldsValuesTuple&, std::vector<sai_object_id_t>&, std::string&);
+    void setObjectReference(type_map&, const std::string&, const std::string&, const std::string&, const std::string&, const std::string&);
+    bool isObjectBeingReferenced(type_map&, const std::string&, const std::string&);
 
     /* Note: consumer will be owned by this class */
     void addExecutor(Executor* executor);
