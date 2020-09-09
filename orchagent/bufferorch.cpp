@@ -300,7 +300,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
 
                 if (SAI_NULL_OBJECT_ID != sai_object)
                 {
-                    // We should skip the pool type because it's create only when setting a pool's attribute.
+                    // We should skip the pool mode because it's create only when setting a pool's attribute.
                     SWSS_LOG_INFO("Skip setting buffer pool mode %s for pool %s", mode.c_str(), object_name.c_str());
                     continue;
                 }
@@ -463,7 +463,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             {
                 if (SAI_NULL_OBJECT_ID != sai_object)
                 {
-                    // We should skip the profile's pool name because it's create only when setting a profile's attribute.
+                    // We should skip the profile's threshold type because it's create only when setting a profile's attribute.
                     SWSS_LOG_INFO("Skip setting buffer profile's threshold type for profile %s", object_name.c_str());
                 }
                 else
@@ -481,7 +481,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             {
                 if (SAI_NULL_OBJECT_ID != sai_object)
                 {
-                    // We should skip the profile's pool name because it's create only when setting a profile's attribute.
+                    // We should skip the profile's threshold type because it's create only when setting a profile's attribute.
                     SWSS_LOG_INFO("Skip setting buffer profile's threshold type for profile %s", object_name.c_str());
                 }
                 else
