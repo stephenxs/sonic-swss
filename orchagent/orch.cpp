@@ -378,7 +378,7 @@ ref_resolve_status Orch::resolveFieldRefValue(
     const string &field_name,
     KeyOpFieldsValuesTuple &tuple,
     sai_object_id_t &sai_object,
-    string &object_name)
+    string &referenced_object_name)
 {
     SWSS_LOG_ENTER();
 
@@ -393,7 +393,7 @@ ref_resolve_status Orch::resolveFieldRefValue(
                 SWSS_LOG_ERROR("Multiple same fields %s", field_name.c_str());
                 return ref_resolve_status::multiple_instances;
             }
-            string ref_type_name;
+            string ref_type_name, object_name;
             if (!parseReference(type_maps, fvValue(*i), ref_type_name, object_name))
             {
                 return ref_resolve_status::not_resolved;
@@ -403,6 +403,7 @@ ref_resolve_status Orch::resolveFieldRefValue(
                 return ref_resolve_status::empty;
             }
             sai_object = (*(type_maps[ref_type_name]))[object_name].m_saiObjectId;
+            referenced_object_name = ref_type_name + delimiter + object_name;
             hit = true;
         }
     }
@@ -410,7 +411,32 @@ ref_resolve_status Orch::resolveFieldRefValue(
     {
         return ref_resolve_status::field_not_found;
     }
+
     return ref_resolve_status::success;
+}
+
+void Orch::removeMeFromObjsReferencedByMe(
+    type_map &type_maps,
+    referenced_object &obj,
+    const string &table,
+    const string &obj_name,
+    const string &field,
+    const string &old_referenced_obj_name)
+{
+    vector<string> objects = tokenize(old_referenced_obj_name, list_item_delimiter);
+    for (auto &obj : objects)
+    {
+        // obj_name references token
+        auto tokens = tokenize(obj, delimiter);
+        auto &referenced_table = tokens[0];
+        auto &ref_obj_name = tokens[1];
+        auto &old_referenced_obj = (*type_maps[referenced_table])[ref_obj_name];
+        old_referenced_obj.m_objsDependingOnMe.erase(obj_name);
+        SWSS_LOG_INFO("Obj %s.%s Field %s: Remove reference to %s %s (now %s)",
+                      table.c_str(), obj_name.c_str(), field.c_str(),
+                      referenced_table.c_str(), ref_obj_name.c_str(),
+                      to_string(old_referenced_obj.m_objsDependingOnMe.size()).c_str());
+    }
 }
 
 void Orch::setObjectReference(
@@ -418,45 +444,47 @@ void Orch::setObjectReference(
     const string &table,
     const string &obj_name,
     const string &field,
-    const string &referenced_table,
     const string &referenced_obj)
 {
     auto &obj = (*type_maps[table])[obj_name];
     auto field_ref = obj.m_objsReferencingByMe.find(field);
 
-    // remove the reference to the old object, if any
     if (field_ref != obj.m_objsReferencingByMe.end())
+        removeMeFromObjsReferencedByMe(type_maps, obj, table, obj_name, field, field_ref->second);
+
+    obj.m_objsReferencingByMe[field] = referenced_obj;
+
+    // Add the reference to the new object being referenced
+    vector<string> objs = tokenize(referenced_obj, list_item_delimiter);
+    for (auto &obj : objs)
     {
-        auto &old_referenced_obj_name = field_ref->second;
-        vector<string> tokens = tokenize(old_referenced_obj_name, list_item_delimiter);
-        for (auto &token : tokens)
-        {
-            // obj_name references token
-            auto &old_referenced_obj = (*type_maps[referenced_table])[token];
-            old_referenced_obj.m_objsDependingOnMe.erase(obj_name);
-            SWSS_LOG_INFO("Obj %s Field %s: Remove reference to %s", obj_name.c_str(), field.c_str(), token.c_str());
-        }
+        auto tokens = tokenize(obj, delimiter);
+        auto &referenced_table = tokens[0];
+        auto &referenced_obj_name = tokens[1];
+        auto &new_obj_being_referenced = (*type_maps[referenced_table])[referenced_obj_name];
+        new_obj_being_referenced.m_objsDependingOnMe.insert(obj_name);
+        SWSS_LOG_INFO("Obj %s.%s Field %s: Add reference to %s %s (now %s)",
+                      table.c_str(), obj_name.c_str(), field.c_str(),
+                      referenced_table.c_str(), referenced_obj_name.c_str(),
+                      to_string(new_obj_being_referenced.m_objsDependingOnMe.size()).c_str());
+    }
+}
+
+void Orch::removeObject(
+    type_map &type_maps,
+    const string &table,
+    const string &obj_name)
+{
+    auto &obj = (*type_maps[table])[obj_name];
+
+    for (auto field_ref : obj.m_objsReferencingByMe)
+    {
+        removeMeFromObjsReferencedByMe(type_maps, obj, table, obj_name, field_ref.first, field_ref.second);
     }
 
     // Update the field store
-    if (referenced_obj.empty())
-    {
-        obj.m_objsReferencingByMe.erase(field);
-        SWSS_LOG_INFO("Obj %s Field %s: No new referenced obj provided, remove field from store", obj_name.c_str(), field.c_str());
-    }
-    else
-    {
-        obj.m_objsReferencingByMe[field] = referenced_obj;
-
-        // Add the reference to the new object being referenced
-        vector<string> tokens = tokenize(referenced_obj, list_item_delimiter);
-        for (auto &token : tokens)
-        {
-            auto &new_obj_being_referenced = (*type_maps[referenced_table])[token];
-            new_obj_being_referenced.m_objsDependingOnMe.insert(obj_name);
-            SWSS_LOG_INFO("Obj %s Field %s: Add reference to %s", obj_name.c_str(), field.c_str(), referenced_obj.c_str());
-        }
-    }
+    (*type_maps[table]).erase(obj_name);
+    SWSS_LOG_INFO("Obj %s:%s is removed from store", table.c_str(), obj_name.c_str());
 }
 
 bool Orch::isObjectBeingReferenced(
@@ -465,6 +493,21 @@ bool Orch::isObjectBeingReferenced(
     const string &obj_name)
 {
     return !(*type_maps[table])[obj_name].m_objsDependingOnMe.empty();
+}
+
+string Orch::objectReferenceInfo(
+    type_map &type_maps,
+    const string &table,
+    const string &obj_name)
+{
+    auto &objsDependingSet = (*type_maps[table])[obj_name].m_objsDependingOnMe;
+    for (auto &depObjName : objsDependingSet)
+    {
+        string hint = table + " " + obj_name + " first object: " + depObjName;
+        hint += " reference count: " + to_string(objsDependingSet.size());
+        return hint;
+    }
+    return "reference count: 0";
 }
 
 void Orch::doTask()
@@ -570,10 +613,9 @@ ref_resolve_status Orch::resolveFieldRefArray(
                 sai_object_id_t sai_obj = (*(type_maps[ref_type_name]))[object_name].m_saiObjectId;
                 SWSS_LOG_DEBUG("Resolved to sai_object:0x%" PRIx64 ", type:%s, name:%s", sai_obj, ref_type_name.c_str(), object_name.c_str());
                 sai_object_arr.push_back(sai_obj);
-                if (object_name_list.empty())
-                    object_name_list = object_name;
-                else
-                    object_name_list += string(&list_item_delimiter) + object_name;
+                if (!object_name_list.empty())
+                    object_name_list += string(&list_item_delimiter);
+                object_name_list += ref_type_name + delimiter + object_name;
             }
             count++;
         }

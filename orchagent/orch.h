@@ -55,9 +55,10 @@ typedef enum
 
 typedef struct
 {
-    // m_objsDependingOnMe stores names of all objects depending on the current obj
+    // m_objsDependingOnMe stores names (without table name) of all objects depending on the current obj
     std::set<std::string> m_objsDependingOnMe;
     // m_objsReferencingByMe is a map from a field of the current object's to the object names it references
+    // the object names are with table name
     // multiple objects being referenced are separated by ','
     std::map<std::string, std::string> m_objsReferencingByMe;
     sai_object_id_t m_saiObjectId;
@@ -227,13 +228,16 @@ protected:
     bool parseIndexRange(const std::string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
     bool parseReference(type_map &type_maps, std::string &ref, std::string &table_name, std::string &object_name);
     ref_resolve_status resolveFieldRefArray(type_map&, const std::string&, swss::KeyOpFieldsValuesTuple&, std::vector<sai_object_id_t>&, std::string&);
-    void setObjectReference(type_map&, const std::string&, const std::string&, const std::string&, const std::string&, const std::string&);
+    void setObjectReference(type_map&, const std::string&, const std::string&, const std::string&, const std::string&);
+    void removeObject(type_map&, const std::string&, const std::string&);
     bool isObjectBeingReferenced(type_map&, const std::string&, const std::string&);
+    std::string objectReferenceInfo(type_map&, const std::string&, const std::string&);
 
     /* Note: consumer will be owned by this class */
     void addExecutor(Executor* executor);
     Executor *getExecutor(std::string executorName);
 private:
+    void removeMeFromObjsReferencedByMe(type_map &type_maps, referenced_object &obj, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name);
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
 };
 
