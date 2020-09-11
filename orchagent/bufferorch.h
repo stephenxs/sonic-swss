@@ -26,11 +26,12 @@ const string buffer_profile_field_name      = "profile";
 const string buffer_value_ingress           = "ingress";
 const string buffer_value_egress            = "egress";
 const string buffer_profile_list_field_name = "profile_list";
+const string buffer_headroom_type_field_name= "headroom_type";
 
 class BufferOrch : public Orch
 {
 public:
-    BufferOrch(DBConnector *db, vector<string> &tableNames);
+    BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames);
     bool isPortReady(const std::string& port_name) const;
     static type_map m_buffer_type_maps;
     void generateBufferPoolWatermarkCounterIdList(void);
@@ -47,6 +48,7 @@ private:
     void initBufferReadyLists(DBConnector *db);
     void initBufferReadyList(Table& table);
     void initFlexCounterGroupTable(void);
+    void initBufferConstants();
     task_process_status processBufferPool(Consumer &consumer);
     task_process_status processBufferProfile(Consumer &consumer);
     task_process_status processQueue(Consumer &consumer);
@@ -61,6 +63,8 @@ private:
     unique_ptr<DBConnector> m_flexCounterDb;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
+
+    Table m_stateBufferMaximumValueTable;
 
     unique_ptr<DBConnector> m_countersDb;
 
