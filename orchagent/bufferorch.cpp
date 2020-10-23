@@ -789,7 +789,9 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
             }
         }
         if (portUpdated)
+        {
             gPortsOrch->setPort(port_name, port);
+        }
     }
 
     if (m_ready_list.find(key) != m_ready_list.end())
