@@ -418,7 +418,7 @@ namespace portsorch_test
 
         // Port should have been updated by BufferOrch->doTask
         gPortsOrch->getPort("Ethernet0", port);
-        auto profile_id = (*BufferOrch::m_buffer_type_maps["BUFFER_PROFILE_TABLE"])[string("test_profile")];
+        auto profile_id = (*BufferOrch::m_buffer_type_maps["BUFFER_PROFILE"])[string("test_profile")].m_saiObjectId;
         ASSERT_TRUE(profile_id != SAI_NULL_OBJECT_ID);
         ASSERT_TRUE(port.m_priority_group_pending_profile[3] == profile_id);
         ASSERT_TRUE(port.m_priority_group_pending_profile[4] == SAI_NULL_OBJECT_ID);
