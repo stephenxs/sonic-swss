@@ -2,12 +2,23 @@ import time
 import json
 import redis
 import pytest
+import re
+import buffer_model
 
 from pprint import pprint
 from swsscommon import swsscommon
+from dvslib.dvs_common import PollingConfig
+
+@pytest.yield_fixture
+def dynamic_buffer(dvs):
+    buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+    yield
+    buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
 
 
+@pytest.mark.usefixtures("dynamic_buffer")
 class TestBufferMgrDyn(object):
+    DEFAULT_POLLING_CONFIG = PollingConfig(polling_interval=0.01, timeout=40, strict=True)
     def setup_db(self, dvs):
         self.initialized = False
         self.cableLenTest1 = "15m"
@@ -16,6 +27,7 @@ class TestBufferMgrDyn(object):
         self.speedToTest2 = "10000"
 
         self.app_db = dvs.get_app_db()
+        self.asic_db = dvs.get_asic_db()
         self.config_db = dvs.get_config_db()
         self.state_db = dvs.get_state_db()
 
@@ -28,7 +40,7 @@ class TestBufferMgrDyn(object):
         elif self.originalSpeed == "":
             self.originalSpeed = "100000"
 
-        # Check whether cabel length has been configured
+        # Check whether cable length has been configured
         fvs = self.config_db.wait_for_entry("CABLE_LENGTH", "AZURE")
         self.originalCableLen = fvs["Ethernet0"]
         if self.originalCableLen == self.cableLenTest1:
@@ -39,12 +51,65 @@ class TestBufferMgrDyn(object):
         fvs = {"mmu_size": "12766208"}
         self.state_db.create_entry("BUFFER_MAX_PARAM_TABLE", "global", fvs)
 
+        # The default lossless priority group will be removed ahead of staring test
+        # By doing so all the dynamically generated profiles will be removed and
+        # it's easy to identify the SAI OID of the new profile once it's created by
+        # comparing the new set of ASIC_STATE:BUFFER_PROFILE table against the initial one
+        pgs = self.config_db.get_keys('BUFFER_PG')
+        for key in pgs:
+            pg = self.config_db.get_entry('BUFFER_PG', key)
+            if pg['profile'] == 'NULL':
+                self.config_db.delete_entry('BUFFER_PG', key)
+
+        self.setup_asic_db(dvs)
+
         self.initialized = True
 
-    def make_lossless_profile_name(self, speed, cable_length):
-        return "pg_lossless_" + speed + "_" + cable_length + "_profile"
+    def setup_asic_db(self, dvs):
+        buffer_pool_set = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL"))
+        self.initProfileSet = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE"))
+        self.initPGSet = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP"))
 
-    @pytest.mark.skip(reason="Traditional buffer model runs on VS image currently.")
+        ingress_lossless_pool = self.app_db.get_entry("BUFFER_POOL_TABLE", "ingress_lossless_pool")
+        self.ingress_lossless_pool_asic = None
+
+        for key in buffer_pool_set:
+            bufferpool = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL", key)
+            if bufferpool["SAI_BUFFER_POOL_ATTR_TYPE"] == "SAI_BUFFER_POOL_TYPE_INGRESS":
+                if ingress_lossless_pool["size"] == bufferpool["SAI_BUFFER_POOL_ATTR_SIZE"]:
+                    self.ingress_lossless_pool_asic = bufferpool
+                    self.ingress_lossless_pool_oid = key
+
+    def check_new_profile_in_asic_db(self, dvs, profile):
+        diff = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE")) - self.initProfileSet
+        if len(diff) == 1:
+            self.newProfileInAsicDb = diff.pop()
+        # in case diff is empty, we just treat the newProfileInAsicDb cached the latest one
+        fvs = self.app_db.get_entry("BUFFER_PROFILE_TABLE", profile)
+        if fvs.get('dynamic_th'):
+            sai_threshold_value = fvs['dynamic_th']
+            sai_threshold_mode = 'SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC'
+        else:
+            sai_threshold_value = fvs['static_th']
+            sai_threshold_mode = 'SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC'
+        self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", self.newProfileInAsicDb,
+                                             {'SAI_BUFFER_PROFILE_ATTR_XON_TH': fvs['xon'],
+                                              'SAI_BUFFER_PROFILE_ATTR_XOFF_TH': fvs['xoff'],
+                                              'SAI_BUFFER_PROFILE_ATTR_RESERVED_BUFFER_SIZE': fvs['size'],
+                                              'SAI_BUFFER_PROFILE_ATTR_POOL_ID': self.ingress_lossless_pool_oid,
+                                              'SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE': sai_threshold_mode,
+                                              'SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH': sai_threshold_value},
+                                          self.DEFAULT_POLLING_CONFIG)
+
+    def make_lossless_profile_name(self, speed, cable_length, mtu = None, dynamic_th = None):
+        extra = ""
+        if mtu:
+            extra += "_mtu" + mtu
+        if dynamic_th:
+            extra += "_th" + dynamic_th
+
+        return "pg_lossless_" + speed + "_" + cable_length + extra + "_profile"
+
     def test_changeSpeed(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -86,7 +151,6 @@ class TestBufferMgrDyn(object):
         # remove lossless PG 3-4 on interface
         dvs.runcmd("config interface buffer priority-group lossless remove Ethernet0 3-4")
 
-    @pytest.mark.skip(reason="Traditional buffer model runs on VS image currently.")
     def test_changeCableLen(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -97,6 +161,7 @@ class TestBufferMgrDyn(object):
         dvs.runcmd("config interface cable-length Ethernet0 " + self.cableLenTest1)
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.cableLenTest1)
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
         # Remove the lossless PGs
@@ -113,19 +178,21 @@ class TestBufferMgrDyn(object):
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.cableLenTest2)
         # Check the BUFFER_PROFILE_TABLE and BUFFER_PG_TABLE
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
         # Revert the cable length
         dvs.runcmd("config interface cable-length Ethernet0 " + self.originalCableLen)
         # Check the BUFFER_PROFILE_TABLE and BUFFER_PG_TABLE
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
+        self.asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", self.newProfileInAsicDb)
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
+        self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
         # remove lossless PG 3-4 on interface
         dvs.runcmd("config interface buffer priority-group lossless remove Ethernet0 3-4")
 
-    @pytest.mark.skip(reason="Traditional buffer model runs on VS image currently.")
     def test_MultipleLosslessPg(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -149,6 +216,7 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         expectedProfile = self.make_lossless_profile_name(self.speedToTest1, self.cableLenTest1)
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
@@ -156,6 +224,7 @@ class TestBufferMgrDyn(object):
         dvs.runcmd("config interface cable-length Ethernet0 " + self.originalCableLen)
         dvs.runcmd("config interface speed Ethernet0 " + self.originalSpeed)
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
+        self.asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", self.newProfileInAsicDb)
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
@@ -165,15 +234,12 @@ class TestBufferMgrDyn(object):
         dvs.runcmd("config interface buffer priority-group lossless remove Ethernet0 3-4")
         dvs.runcmd("config interface buffer priority-group lossless remove Ethernet0 6")
 
-    @pytest.mark.skip(reason="Traditional buffer model runs on VS image currently.")
     def test_headroomOverride(self, dvs, testlog):
         self.setup_db(dvs)
 
-        # configure lossless PG 3-4 on interface
-        dvs.runcmd("config interface buffer priority-group lossless add Ethernet0 3-4")
-
         # Configure static profile
         dvs.runcmd("config buffer profile add test --xon 18432 --xoff 16384")
+        self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", "test")
         self.app_db.wait_for_exact_match("BUFFER_PROFILE_TABLE", "test",
                         { "pool" : "[BUFFER_POOL_TABLE:ingress_lossless_pool]",
                           "xon" : "18432",
@@ -181,6 +247,10 @@ class TestBufferMgrDyn(object):
                           "size" : "34816",
                           "dynamic_th" : "0"
                           })
+        self.check_new_profile_in_asic_db(dvs, "test")
+
+        # configure lossless PG 3-4 on interface
+        dvs.runcmd("config interface buffer priority-group lossless add Ethernet0 3-4")
 
         dvs.runcmd("config interface cable-length Ethernet0 " + self.cableLenTest1)
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.cableLenTest1)
@@ -192,12 +262,27 @@ class TestBufferMgrDyn(object):
         dvs.runcmd("config interface buffer priority-group lossless add Ethernet0 6 test")
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:test]"})
 
+        # update the profile
+        dvs.runcmd("config buffer profile set test --xon 18432 --xoff 18432")
+        self.app_db.wait_for_exact_match("BUFFER_PROFILE_TABLE", "test",
+                        { "pool" : "[BUFFER_POOL_TABLE:ingress_lossless_pool]",
+                          "xon" : "18432",
+                          "xoff" : "18432",
+                          "size" : "36864",
+                          "dynamic_th" : "0"
+                          })
+        self.check_new_profile_in_asic_db(dvs, "test")
+
         dvs.runcmd("config interface buffer priority-group lossless remove Ethernet0")
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:3-4")
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:6")
 
         dvs.runcmd("config interface buffer priority-group lossless add Ethernet0 3-4")
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
+
+        dvs.runcmd("config buffer profile remove test")
+        self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", "test")
+        self.asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", self.newProfileInAsicDb)
 
         dvs.runcmd("config interface cable-length Ethernet0 " + self.originalCableLen)
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
@@ -208,8 +293,59 @@ class TestBufferMgrDyn(object):
         # remove lossless PG 3-4 on interface
         dvs.runcmd("config interface buffer priority-group lossless remove Ethernet0 3-4")
 
-    def test_bufferModel(self, dvs, testlog):
+    def test_mtuUpdate(self, dvs, testlog):
         self.setup_db(dvs)
 
-        metadata = self.config_db.get_entry("DEVICE_METADATA", "localhost")
-        assert metadata["buffer_model"] == "traditional"
+        test_mtu = '1500'
+        default_mtu = '9100'
+        expectedProfileMtu = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen, mtu = test_mtu)
+        expectedProfileNormal = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
+
+        # update the mtu on the interface
+        dvs.runcmd("config interface mtu Ethernet0 {}".format(test_mtu))
+
+        # configure lossless PG 3-4 on interface
+        dvs.runcmd("config interface buffer priority-group lossless add Ethernet0 3-4")
+
+        self.app_db.wait_for_entry("BUFFER_PG_TABLE", "Ethernet0:3-4")
+        self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfileMtu)
+        self.check_new_profile_in_asic_db(dvs, expectedProfileMtu)
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(expectedProfileMtu)})
+
+        dvs.runcmd("config interface mtu Ethernet0 {}".format(default_mtu))
+
+        self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfileMtu)
+        self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfileNormal)
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(expectedProfileNormal)})
+
+        dvs.runcmd("config interface buffer priority-group lossless remove Ethernet0 3-4")
+
+    def test_nonDefaultAlpha(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        test_dynamic_th_1 = '1'
+        expectedProfile_th1 = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen, dynamic_th = test_dynamic_th_1)
+        test_dynamic_th_2 = '2'
+        expectedProfile_th2 = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen, dynamic_th = test_dynamic_th_2)
+
+        dvs.runcmd("config buffer profile add non-default-dynamic --dynamic_th {}".format(test_dynamic_th_1))
+        # add a profile with non-default dynamic_th
+        dvs.runcmd("config buffer profile add non-default-dynamic --dynamic_th {}".format(test_dynamic_th_1))
+
+        # configure lossless PG 3-4 on interface
+        dvs.runcmd("config interface buffer priority-group lossless add Ethernet0 3-4 non-default-dynamic")
+
+        self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile_th1)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile_th1)
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile_th1 + "]"})
+
+        # modify the profile to another dynamic_th
+        dvs.runcmd("config buffer profile set non-default-dynamic --dynamic_th {}".format(test_dynamic_th_2))
+
+        self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile_th1)
+        self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile_th2)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile_th2)
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile_th2 + "]"})
+
+        dvs.runcmd("config interface buffer priority-group lossless remove Ethernet0 3-4")
+        dvs.runcmd("config buffer profile remove non-default-dynamic")
