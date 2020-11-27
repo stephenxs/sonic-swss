@@ -274,16 +274,16 @@ string BufferMgrDynamic::getPgPoolMode()
 }
 
 // Meta flows which are called by main flows
-void BufferMgrDynamic::calculateHeadroomSize(const string &speed, const string &cable, const string &port_mtu, const string &gearbox_model, buffer_profile_t &headroom)
+void BufferMgrDynamic::calculateHeadroomSize(buffer_profile_t &headroom)
 {
     // Call vendor-specific lua plugin to calculate the xon, xoff, xon_offset, size and threshold
     vector<string> keys = {};
     vector<string> argv = {};
 
     keys.emplace_back(headroom.name);
-    argv.emplace_back(speed);
-    argv.emplace_back(cable);
-    argv.emplace_back(port_mtu);
+    argv.emplace_back(headroom.speed);
+    argv.emplace_back(headroom.cable_length);
+    argv.emplace_back(headroom.port_mtu);
     argv.emplace_back(m_identifyGearboxDelay);
 
     try
@@ -336,9 +336,37 @@ void BufferMgrDynamic::recalculateSharedBufferPool()
 
             if ("debug" != poolName)
             {
-                auto &pool = m_bufferPoolLookup[pairs[0]];
+                auto &pool = m_bufferPoolLookup[poolName];
+                bool xoff_updated = false;
 
-                if (pool.total_size == pairs[1])
+                if (poolName == INGRESS_LOSSLESS_PG_POOL_NAME)
+                {
+                    if (pairs.size() > 2)
+                    {
+                        auto &xoffStr = pairs[2];
+                        unsigned long xoffNum = atol(xoffStr.c_str());
+                        if (m_mmuSizeNumber > 0 && m_mmuSizeNumber < xoffNum)
+                        {
+                            SWSS_LOG_ERROR("Buffer pool %s: Invalid xoff %s, exceeding the mmu size %s, ignored xoff but the pool size will be updated",
+                                           poolName.c_str(), xoffStr.c_str(), m_mmuSize.c_str());
+                        }
+                        else
+                        {
+                            pool.xoff = xoffStr;
+                            xoff_updated = true;
+                        }
+                    }
+                    else
+                    {
+                        if (!pool.xoff.empty() && pool.xoff != "0")
+                        {
+                            xoff_updated = true;
+                        }
+                        pool.xoff = "0";
+                    }
+                }
+
+                if (pool.total_size == pairs[1] && !xoff_updated)
                     continue;
 
                 auto &poolSizeStr = pairs[1];
@@ -412,6 +440,9 @@ void BufferMgrDynamic::updateBufferPoolToDb(const string &name, const buffer_poo
         fvVector.emplace_back(make_pair("type", "ingress"));
     else
         fvVector.emplace_back(make_pair("type", "egress"));
+
+    if (!pool.xoff.empty())
+        fvVector.emplace_back(make_pair("xoff", pool.xoff));
 
     fvVector.emplace_back(make_pair("mode", pool.mode));
 
@@ -496,9 +527,14 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
             return task_process_status::task_need_retry;
         }
 
+        profile.speed = speed;
+        profile.cable_length = cable;
+        profile.port_mtu = mtu;
+        profile.gearbox_model = gearbox_model;
+
         // Call vendor-specific lua plugin to calculate the xon, xoff, xon_offset, size
         // Pay attention, the threshold can contain valid value
-        calculateHeadroomSize(speed, cable, mtu, gearbox_model, profile);
+        calculateHeadroomSize(profile);
 
         profile.threshold = threshold;
         profile.dynamic_calculated = true;
@@ -766,6 +802,62 @@ task_process_status BufferMgrDynamic::refreshPriorityGroupsForPort(const string 
     return task_process_status::task_success;
 }
 
+void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size)
+{
+    // lossless profiles need to be refreshed only if system is switched between SHP and non-SHP
+    bool need_refresh_profiles = false;
+    bool shp_enabled_by_size = false;
+
+    auto searchRef = m_bufferProfileLookup.find(INGRESS_LOSSLESS_PG_POOL_NAME);
+    if (searchRef != m_bufferProfileLookup.end())
+    {
+        auto &ingressLosslessPool = searchRef->second;
+        auto &shp_size = ingressLosslessPool.xoff;
+        shp_enabled_by_size = !shp_size.empty() && shp_size != "0";
+    }
+
+    if (enable_state_updated_by_ratio)
+    {
+        if (shp_enabled_by_size)
+            SWSS_LOG_INFO("SHP: No need to refresh lossless profiles even if enable state updated by over subscribe ratio, already enabled by SHP size");
+        else
+            need_refresh_profiles = true;
+    }
+
+    if (enable_state_updated_by_size)
+    {
+        if (m_overSubscribeRatio.empty() || m_overSubscribeRatio == "0")
+            need_refresh_profiles = true;
+        else
+            SWSS_LOG_INFO("SHP: No need to refresh lossless profiles even if enable state updated by SHP size, already enabled by over subscribe ratio");
+    }
+
+    if (need_refresh_profiles)
+    {
+        SWSS_LOG_NOTICE("Updating dynamic buffer profiles due to shared headroom pool state updated");
+
+        for (auto it = m_bufferProfileLookup.begin(); it != m_bufferProfileLookup.end(); ++it)
+        {
+            auto &name = it->first;
+            auto &profile = it->second;
+            if (!profile.dynamic_calculated)
+            {
+                SWSS_LOG_INFO("Non dynamic profile %s skipped", name.c_str());
+                continue;
+            }
+            SWSS_LOG_INFO("Updating profile %s with speed %s cable length %s mtu %s gearbox model %s",
+                          name.c_str(),
+                          profile.speed.c_str(), profile.cable_length.c_str(), profile.port_mtu.c_str(), profile.gearbox_model.c_str());
+            // recalculate the headroom size
+            calculateHeadroomSize(profile);
+            updateBufferProfileToDb(name, profile);
+        }
+        SWSS_LOG_NOTICE("Updating dynamic buffer profiles finished");
+    }
+
+    checkSharedBufferPoolSize();
+}
+
 // Main flows
 
 // Update lossless pg on a port after an PG has been installed on the port
@@ -949,7 +1041,19 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFiel
             if (fvField(i) == "default_dynamic_th")
             {
                 m_defaultThreshold = fvValue(i);
-                SWSS_LOG_DEBUG("Handling Buffer Maximum value table field default_dynamic_th value %s", m_defaultThreshold.c_str());
+                SWSS_LOG_DEBUG("Handling Buffer parameter table field default_dynamic_th value %s", m_defaultThreshold.c_str());
+            }
+            if (fvField(i) == "over_subscribe_ratio")
+            {
+                string &newRatio = fvValue(i);
+                if (newRatio == m_overSubscribeRatio)
+                    continue;
+
+                bool shp_is_enabled = !m_overSubscribeRatio.empty() && m_overSubscribeRatio != "0";
+                bool shp_will_be_enabled = !newRatio.empty() && newRatio != "0";
+                m_overSubscribeRatio = newRatio;
+                SWSS_LOG_INFO("Recalculate shared buffer pool size due to over subscribe ratio is updated to %s", m_overSubscribeRatio.c_str());
+                refreshSharedHeadroomPool(shp_is_enabled != shp_will_be_enabled, false);
             }
         }
     }
@@ -1099,15 +1203,18 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         string &mtu = portInfo.mtu;
         string &speed = portInfo.speed;
 
-        if (cable_length.empty() || speed.empty())
-        {
-            SWSS_LOG_WARN("Cable length for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
-            // We don't retry here because it doesn't make sense until the cable length is configured.
-            return task_process_status::task_success;
-        }
-
         if (speed_updated || mtu_updated)
         {
+            if (cable_length.empty() || speed.empty())
+            {
+                // we still need to update pool size when port with headroom override is shut down
+                // even if its cable length or speed isn't configured
+                // so cable length and speed isn't tested for shutdown
+                SWSS_LOG_WARN("Cable length for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
+                // We don't retry here because it doesn't make sense until the cable length is configured.
+                return task_process_status::task_success;
+            }
+
             SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to speed or port updated", port.c_str());
 
             //Try updating the buffer information
@@ -1170,7 +1277,17 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
             }
             if (field == buffer_pool_xoff_field_name)
             {
-                bufferPool.xoff = value;
+                if (value != bufferPool.xoff)
+                {
+                    bool shp_is_enabled = !bufferPool.xoff.empty() && bufferPool.xoff != "0";
+                    bool shp_will_be_enabled = !value.empty() && value != "0";
+                    bufferPool.xoff = value;
+                    refreshSharedHeadroomPool(false, shp_is_enabled != shp_will_be_enabled);
+                }
+                else
+                {
+                    SWSS_LOG_INFO("Shared headroom pool size updated without change, skipped %s %s", value.c_str(), bufferPool.xoff.c_str());
+                }
             }
             if (field == buffer_pool_mode_field_name)
             {

@@ -83,6 +83,24 @@ end
 
 local egress_lossless_pool_size = redis.call('HGET', 'BUFFER_POOL|egress_lossless_pool', 'size')
 
+-- Whether shared headroom pool is enabled?
+local default_lossless_param_keys = redis.call('KEYS', 'DEFAULT_LOSSLESS_BUFFER_PARAMETER*')
+local over_subscribe_ratio = tonumber(redis.call('HGET', default_lossless_param_keys[1], 'over_subscribe_ratio'))
+
+-- Fetch the shared headroom pool size
+local shp_size = tonumber(redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff'))
+
+local shp_enabled = false
+if over_subscribe_ratio ~= nil and over_subscribe_ratio ~= 0 then
+    shp_enabled = true
+end
+
+if shp_size ~= nil and shp_size ~= 0 then
+    shp_enabled = true
+else
+    shp_size = 0
+end
+
 -- Switch to APPL_DB
 redis.call('SELECT', appl_db)
 
@@ -103,6 +121,7 @@ local statistics = {}
 
 -- Fetch sizes of all of the profiles, accumulate them
 local accumulative_occupied_buffer = 0
+local accumulative_xoff = 0
 for i = 1, #profiles, 1 do
     if profiles[i][1] ~= "BUFFER_PROFILE_TABLE_KEY_SET" and profiles[i][1] ~= "BUFFER_PROFILE_TABLE_DEL_SET" then
         local size = tonumber(redis.call('HGET', profiles[i][1], 'size'))
@@ -114,6 +133,13 @@ for i = 1, #profiles, 1 do
                 profiles[i][2] = count_up_port
             end
             if size ~= 0 then
+                if shp_enabled and shp_size == 0 then
+                    local xon = tonumber(redis.call('HGET', profiles[i][1], 'xon'))
+                    local xoff = tonumber(redis.call('HGET', profiles[i][1], 'xoff'))
+                    if xon ~= nil and xoff ~= nil then
+                        accumulative_xoff = accumulative_xoff + (xon + xoff - size) * profiles[i][2]
+                    end
+                end
                 accumulative_occupied_buffer = accumulative_occupied_buffer + size * profiles[i][2]
             end
             table.insert(statistics, {profiles[i][1], size, profiles[i][2]})
@@ -165,7 +191,14 @@ for i = 1, #epools, 1 do
     end
 end
 
+if shp_enabled and shp_size == 0 then
+    accumulative_xoff = math.ceil(accumulative_xoff / over_subscribe_ratio)
+else
+    accumulative_xoff = shp_size
+end
+
 local pool_size
+accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_xoff
 if ingress_pool_count == 1 then
     pool_size = mmu_size - accumulative_occupied_buffer
 else
@@ -178,16 +211,23 @@ end
 
 for i = 1, #pools_need_update, 1 do
     local pool_name = string.match(pools_need_update[i], "BUFFER_POOL|([^%s]+)$")
-    table.insert(result, pool_name .. ":" .. math.ceil(pool_size))
+    if accumulative_xoff ~= 0 and pool_name == "ingress_lossless_pool" then
+        table.insert(result, pool_name .. ":" .. math.ceil(pool_size) .. ":" .. math.ceil(accumulative_xoff))
+    else
+        table.insert(result, pool_name .. ":" .. math.ceil(pool_size))
+    end
 end
 
 table.insert(result, "debug:mmu_size:" .. mmu_size)
-table.insert(result, "debug:accumulative:" .. accumulative_occupied_buffer)
+table.insert(result, "debug:accumulative size:" .. accumulative_occupied_buffer)
 for i = 1, #statistics do
     table.insert(result, "debug:" .. statistics[i][1] .. ":" .. statistics[i][2] .. ":" .. statistics[i][3])
 end
 table.insert(result, "debug:extra_400g:" .. (lossypg_reserved_400g - lossypg_reserved) .. ":" .. lossypg_400g)
 table.insert(result, "debug:mgmt_pool:" .. mgmt_pool_size)
 table.insert(result, "debug:egress_mirror:" .. accumulative_egress_mirror_overhead)
+table.insert(result, "debug:shp_enabled:" .. tostring(shp_enabled))
+table.insert(result, "debug:shp_size:" .. shp_size)
+table.insert(result, "debug:accumulative xoff:" .. accumulative_xoff)
 
 return result
