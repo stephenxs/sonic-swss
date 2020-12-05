@@ -262,14 +262,12 @@ const object_reference_map &BufferOrch::getBufferPoolNameOidMap(void)
     return *m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME];
 }
 
-task_process_status BufferOrch::processBufferPool(Consumer &consumer)
+task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     sai_status_t sai_status;
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
-    string map_type_name = consumer.getTableName();
+    string map_type_name = APP_BUFFER_POOL_TABLE_NAME;
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
 
@@ -423,14 +421,12 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
     return task_process_status::task_success;
 }
 
-task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
+task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     sai_status_t sai_status;
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
-    string map_type_name = consumer.getTableName();
+    string map_type_name = APP_BUFFER_PROFILE_TABLE_NAME;
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
     string pool_name;
@@ -609,11 +605,9 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
 /*
 Input sample "BUFFER_QUEUE|Ethernet4,Ethernet45|10-15"
 */
-task_process_status BufferOrch::processQueue(Consumer &consumer)
+task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
     sai_object_id_t sai_buffer_profile;
     string buffer_profile_name;
     const string key = kfvKey(tuple);
@@ -651,13 +645,13 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
 
         SWSS_LOG_NOTICE("Set buffer queue %s to %s", key.c_str(), buffer_profile_name.c_str());
 
-        setObjectReference(m_buffer_type_maps, consumer.getTableName(), key, buffer_profile_field_name, buffer_profile_name);
+        setObjectReference(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key, buffer_profile_field_name, buffer_profile_name);
     }
     else if (op == DEL_COMMAND)
     {
         sai_buffer_profile = SAI_NULL_OBJECT_ID;
         SWSS_LOG_NOTICE("Remove buffer queue %s", key.c_str());
-        removeObject(m_buffer_type_maps, consumer.getTableName(), key);
+        removeObject(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key);
     }
     else
     {
@@ -729,11 +723,9 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
 /*
 Input sample "BUFFER_PG|Ethernet4,Ethernet45|10-15"
 */
-task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
+task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
     sai_object_id_t sai_buffer_profile;
     string buffer_profile_name;
     const string key = kfvKey(tuple);
@@ -772,13 +764,13 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
 
         SWSS_LOG_NOTICE("Set buffer PG %s to %s", key.c_str(), buffer_profile_name.c_str());
 
-        setObjectReference(m_buffer_type_maps, consumer.getTableName(), key, buffer_profile_field_name, buffer_profile_name);
+        setObjectReference(m_buffer_type_maps, APP_BUFFER_PG_TABLE_NAME, key, buffer_profile_field_name, buffer_profile_name);
     }
     else if (op == DEL_COMMAND)
     {
         sai_buffer_profile = SAI_NULL_OBJECT_ID;
         SWSS_LOG_NOTICE("Remove buffer PG %s", key.c_str());
-        removeObject(m_buffer_type_maps, consumer.getTableName(), key);
+        removeObject(m_buffer_type_maps, APP_BUFFER_PG_TABLE_NAME, key);
     }
     else
     {
@@ -859,21 +851,15 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
 /*
 Input sample:"[BUFFER_PROFILE_TABLE:i_port.profile0],[BUFFER_PROFILE_TABLE:i_port.profile1]"
 */
-task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consumer)
+task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
     Port port;
     string key = kfvKey(tuple);
     string op = kfvOp(tuple);
 
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
-    if (consumer.getTableName() != APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME)
-    {
-        SWSS_LOG_ERROR("Key with invalid table type passed in %s, expected:%s", key.c_str(), APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
-        return task_process_status::task_invalid_entry;
-    }
+
     vector<string> port_names = tokenize(key, list_item_delimiter);
     vector<sai_object_id_t> profile_list;
 
@@ -890,7 +876,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
         return task_process_status::task_failed;
     }
 
-    setObjectReference(m_buffer_type_maps, consumer.getTableName(), key, buffer_profile_list_field_name, profile_name_list);
+    setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_INGRESS_BUFFER_PROFILE_LIST;
@@ -917,11 +903,9 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
 /*
 Input sample:"[BUFFER_PROFILE_TABLE:e_port.profile0],[BUFFER_PROFILE_TABLE:e_port.profile1]"
 */
-task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consumer)
+task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
     Port port;
     string key = kfvKey(tuple);
     string op = kfvOp(tuple);
@@ -942,7 +926,7 @@ task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consume
         return task_process_status::task_failed;
     }
 
-    setObjectReference(m_buffer_type_maps, consumer.getTableName(), key, buffer_profile_list_field_name, profile_name_list);
+    setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_EGRESS_BUFFER_PROFILE_LIST;
@@ -1022,7 +1006,7 @@ void BufferOrch::doTask(Consumer &consumer)
             continue;
         }
 
-        auto task_status = (this->*(m_bufferHandlerMap[map_type_name]))(consumer);
+        auto task_status = (this->*(m_bufferHandlerMap[map_type_name]))(it->second);
         switch(task_status)
         {
             case task_process_status::task_success :

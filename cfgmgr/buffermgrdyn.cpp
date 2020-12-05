@@ -910,10 +910,8 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(buffer_profile_t
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::handleBufferMaxParam(Consumer &consumer)
+task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTuple &t)
 {
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple t = it->second;
     string op = kfvOp(t);
 
     if (op == SET_COMMAND)
@@ -940,10 +938,8 @@ task_process_status BufferMgrDynamic::handleBufferMaxParam(Consumer &consumer)
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(Consumer &consumer)
+task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFieldsValuesTuple &t)
 {
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple t = it->second;
     string op = kfvOp(t);
 
     if (op == SET_COMMAND)
@@ -961,10 +957,8 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(Consumer 
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::handleCableLenTable(Consumer &consumer)
+task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple &t)
 {
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple t = it->second;
     string op = kfvOp(t);
 
     task_process_status task_status = task_process_status::task_success;
@@ -1065,10 +1059,8 @@ task_process_status BufferMgrDynamic::handleCableLenTable(Consumer &consumer)
 // 3. if mtu isn't configured, take the default value
 // 4. if speed_updated or mtu_updated, update headroom size
 //    elif admin_status_updated, update buffer pool size
-task_process_status BufferMgrDynamic::handlePortTable(Consumer &consumer)
+task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &t)
 {
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple t = it->second;
     auto &port = kfvKey(t);
     string op = kfvOp(t);
     bool speed_updated = false, mtu_updated = false, admin_status_updated = false;
@@ -1150,11 +1142,9 @@ task_process_status BufferMgrDynamic::handlePortTable(Consumer &consumer)
     return task_status;
 }
 
-task_process_status BufferMgrDynamic::handleBufferPoolTable(Consumer &consumer)
+task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
     string &pool = kfvKey(tuple);
     string op = kfvOp(tuple);
     vector<FieldValueTuple> fvVector;
@@ -1214,11 +1204,9 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(Consumer &consumer)
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::handleBufferProfileTable(Consumer &consumer)
+task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
     string profileName = kfvKey(tuple);
     string op = kfvOp(tuple);
     vector<FieldValueTuple> fvVector;
@@ -1504,11 +1492,9 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
+task_process_status BufferMgrDynamic::handleBufferPgTable(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
     string key = kfvKey(tuple);
     string op = kfvOp(tuple);
 
@@ -1543,19 +1529,19 @@ task_process_status BufferMgrDynamic::handleBufferPgTable(Consumer &consumer)
     return rc;
 }
 
-task_process_status BufferMgrDynamic::handleBufferQueueTable(Consumer &consumer)
+task_process_status BufferMgrDynamic::handleBufferQueueTable(KeyOpFieldsValuesTuple &t)
 {
-    return doBufferTableTask(consumer, m_applBufferQueueTable);
+    return doBufferTableTask(t, m_applBufferQueueTable);
 }
 
-task_process_status BufferMgrDynamic::handleBufferPortIngressProfileListTable(Consumer &consumer)
+task_process_status BufferMgrDynamic::handleBufferPortIngressProfileListTable(KeyOpFieldsValuesTuple &t)
 {
-    return doBufferTableTask(consumer, m_applBufferIngressProfileListTable);
+    return doBufferTableTask(t, m_applBufferIngressProfileListTable);
 }
 
-task_process_status BufferMgrDynamic::handleBufferPortEgressProfileListTable(Consumer &consumer)
+task_process_status BufferMgrDynamic::handleBufferPortEgressProfileListTable(KeyOpFieldsValuesTuple &t)
 {
-    return doBufferTableTask(consumer, m_applBufferEgressProfileListTable);
+    return doBufferTableTask(t, m_applBufferEgressProfileListTable);
 }
 
 /*
@@ -1577,14 +1563,12 @@ task_process_status BufferMgrDynamic::handleBufferPortEgressProfileListTable(Con
  *  - pool in BUFFER_POOL
  *  - profile in BUFFER_PG
  */
-task_process_status BufferMgrDynamic::doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable)
+task_process_status BufferMgrDynamic::doBufferTableTask(KeyOpFieldsValuesTuple &t, ProducerStateTable &applTable)
 {
     SWSS_LOG_ENTER();
 
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple t = it->second;
     string key = kfvKey(t);
-    const string &name = consumer.getTableName();
+    const string &name = applTable.getTableName();
 
     //transform the separator in key from "|" to ":"
     transformSeperator(key);
@@ -1635,7 +1619,7 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
 
     while (it != consumer.m_toSync.end())
     {
-        auto task_status = (this->*(m_bufferTableHandlerMap[table_name]))(consumer);
+        auto task_status = (this->*(m_bufferTableHandlerMap[table_name]))(it->second);
         switch (task_status)
         {
             case task_process_status::task_failed:

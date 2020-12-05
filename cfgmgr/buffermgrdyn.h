@@ -115,7 +115,7 @@ public:
     using Orch::doTask;
 
 private:
-    typedef task_process_status (BufferMgrDynamic::*buffer_table_handler)(Consumer& consumer);
+    typedef task_process_status (BufferMgrDynamic::*buffer_table_handler)(KeyOpFieldsValuesTuple &t);
     typedef std::map<std::string, buffer_table_handler> buffer_table_handler_map;
     typedef std::pair<std::string, buffer_table_handler> buffer_handler_pair;
 
@@ -224,18 +224,18 @@ private:
     task_process_status doUpdateStaticProfileTask(buffer_profile_t &profile);
 
     // Table update handlers
-    task_process_status handleBufferMaxParam(Consumer &consumer);
-    task_process_status handleDefaultLossLessBufferParam(Consumer &consumer);
-    task_process_status handleCableLenTable(Consumer &consumer);
-    task_process_status handlePortTable(Consumer &consumer);
-    task_process_status handleBufferPoolTable(Consumer &consumer);
-    task_process_status handleBufferProfileTable(Consumer &consumer);
+    task_process_status handleBufferMaxParam(KeyOpFieldsValuesTuple &t);
+    task_process_status handleDefaultLossLessBufferParam(KeyOpFieldsValuesTuple &t);
+    task_process_status handleCableLenTable(KeyOpFieldsValuesTuple &t);
+    task_process_status handlePortTable(KeyOpFieldsValuesTuple &t);
+    task_process_status handleBufferPoolTable(KeyOpFieldsValuesTuple &t);
+    task_process_status handleBufferProfileTable(KeyOpFieldsValuesTuple &t);
     task_process_status handleOneBufferPgEntry(const std::string &key, const std::string &port, const std::string &op, const KeyOpFieldsValuesTuple &tuple);
-    task_process_status handleBufferPgTable(Consumer &consumer);
-    task_process_status handleBufferQueueTable(Consumer &consumer);
-    task_process_status handleBufferPortIngressProfileListTable(Consumer &consumer);
-    task_process_status handleBufferPortEgressProfileListTable(Consumer &consumer);
-    task_process_status doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
+    task_process_status handleBufferPgTable(KeyOpFieldsValuesTuple &t);
+    task_process_status handleBufferQueueTable(KeyOpFieldsValuesTuple &t);
+    task_process_status handleBufferPortIngressProfileListTable(KeyOpFieldsValuesTuple &t);
+    task_process_status handleBufferPortEgressProfileListTable(KeyOpFieldsValuesTuple &t);
+    task_process_status doBufferTableTask(KeyOpFieldsValuesTuple &t, ProducerStateTable &applTable);
     void doTask(Consumer &consumer);
     void doTask(SelectableTimer &timer);
 };

@@ -38,7 +38,7 @@ public:
     const object_reference_map &getBufferPoolNameOidMap(void);
 
 private:
-    typedef task_process_status (BufferOrch::*buffer_table_handler)(Consumer& consumer);
+    typedef task_process_status (BufferOrch::*buffer_table_handler)(KeyOpFieldsValuesTuple &tuple);
     typedef map<string, buffer_table_handler> buffer_table_handler_map;
     typedef pair<string, buffer_table_handler> buffer_handler_pair;
 
@@ -49,12 +49,12 @@ private:
     void initBufferReadyList(Table& table);
     void initFlexCounterGroupTable(void);
     void initBufferConstants();
-    task_process_status processBufferPool(Consumer &consumer);
-    task_process_status processBufferProfile(Consumer &consumer);
-    task_process_status processQueue(Consumer &consumer);
-    task_process_status processPriorityGroup(Consumer &consumer);
-    task_process_status processIngressBufferProfileList(Consumer &consumer);
-    task_process_status processEgressBufferProfileList(Consumer &consumer);
+    task_process_status processBufferPool(KeyOpFieldsValuesTuple &tuple);
+    task_process_status processBufferProfile(KeyOpFieldsValuesTuple &tuple);
+    task_process_status processQueue(KeyOpFieldsValuesTuple &tuple);
+    task_process_status processPriorityGroup(KeyOpFieldsValuesTuple &tuple);
+    task_process_status processIngressBufferProfileList(KeyOpFieldsValuesTuple &tuple);
+    task_process_status processEgressBufferProfileList(KeyOpFieldsValuesTuple &tuple);
 
     buffer_table_handler_map m_bufferHandlerMap;
     std::unordered_map<std::string, bool> m_ready_list;
