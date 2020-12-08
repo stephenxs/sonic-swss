@@ -84,6 +84,8 @@ class TestBufferMgrDyn(object):
         diff = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE")) - self.initProfileSet
         if len(diff) == 1:
             self.newProfileInAsicDb = diff.pop()
+        assert self.newProfileInAsicDb, "Can't get SAI OID for newly created profile {}".format(profile)
+
         # in case diff is empty, we just treat the newProfileInAsicDb cached the latest one
         fvs = self.app_db.get_entry("BUFFER_PROFILE_TABLE", profile)
         if fvs.get('dynamic_th'):
@@ -328,7 +330,6 @@ class TestBufferMgrDyn(object):
         test_dynamic_th_2 = '2'
         expectedProfile_th2 = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen, dynamic_th = test_dynamic_th_2)
 
-        dvs.runcmd("config buffer profile add non-default-dynamic --dynamic_th {}".format(test_dynamic_th_1))
         # add a profile with non-default dynamic_th
         dvs.runcmd("config buffer profile add non-default-dynamic --dynamic_th {}".format(test_dynamic_th_1))
 

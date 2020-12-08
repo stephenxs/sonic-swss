@@ -910,13 +910,13 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(buffer_profile_t
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTuple &t)
+task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTuple &tuple)
 {
-    string op = kfvOp(t);
+    string op = kfvOp(tuple);
 
     if (op == SET_COMMAND)
     {
-        for (auto i : kfvFieldsValues(t))
+        for (auto i : kfvFieldsValues(tuple))
         {
             if (fvField(i) == "mmu_size")
             {
@@ -938,13 +938,13 @@ task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTupl
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFieldsValuesTuple &t)
+task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFieldsValuesTuple &tuple)
 {
-    string op = kfvOp(t);
+    string op = kfvOp(tuple);
 
     if (op == SET_COMMAND)
     {
-        for (auto i : kfvFieldsValues(t))
+        for (auto i : kfvFieldsValues(tuple))
         {
             if (fvField(i) == "default_dynamic_th")
             {
@@ -957,15 +957,15 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFiel
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple &t)
+task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple &tuple)
 {
-    string op = kfvOp(t);
+    string op = kfvOp(tuple);
 
     task_process_status task_status = task_process_status::task_success;
     int failed_item_count = 0;
     if (op == SET_COMMAND)
     {
-        for (auto i : kfvFieldsValues(t))
+        for (auto i : kfvFieldsValues(tuple))
         {
             // receive and cache cable length table
             auto &port = fvField(i);
@@ -1059,10 +1059,10 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
 // 3. if mtu isn't configured, take the default value
 // 4. if speed_updated or mtu_updated, update headroom size
 //    elif admin_status_updated, update buffer pool size
-task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &t)
+task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tuple)
 {
-    auto &port = kfvKey(t);
-    string op = kfvOp(t);
+    auto &port = kfvKey(tuple);
+    string op = kfvOp(tuple);
     bool speed_updated = false, mtu_updated = false, admin_status_updated = false;
 
     SWSS_LOG_DEBUG("processing command:%s PORT table key %s", op.c_str(), port.c_str());
@@ -1077,7 +1077,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &t)
 
     if (op == SET_COMMAND)
     {
-        for (auto i : kfvFieldsValues(t))
+        for (auto i : kfvFieldsValues(tuple))
         {
             if (fvField(i) == "speed")
             {
@@ -1529,19 +1529,19 @@ task_process_status BufferMgrDynamic::handleBufferPgTable(KeyOpFieldsValuesTuple
     return rc;
 }
 
-task_process_status BufferMgrDynamic::handleBufferQueueTable(KeyOpFieldsValuesTuple &t)
+task_process_status BufferMgrDynamic::handleBufferQueueTable(KeyOpFieldsValuesTuple &tuple)
 {
-    return doBufferTableTask(t, m_applBufferQueueTable);
+    return doBufferTableTask(tuple, m_applBufferQueueTable);
 }
 
-task_process_status BufferMgrDynamic::handleBufferPortIngressProfileListTable(KeyOpFieldsValuesTuple &t)
+task_process_status BufferMgrDynamic::handleBufferPortIngressProfileListTable(KeyOpFieldsValuesTuple &tuple)
 {
-    return doBufferTableTask(t, m_applBufferIngressProfileListTable);
+    return doBufferTableTask(tuple, m_applBufferIngressProfileListTable);
 }
 
-task_process_status BufferMgrDynamic::handleBufferPortEgressProfileListTable(KeyOpFieldsValuesTuple &t)
+task_process_status BufferMgrDynamic::handleBufferPortEgressProfileListTable(KeyOpFieldsValuesTuple &tuple)
 {
-    return doBufferTableTask(t, m_applBufferEgressProfileListTable);
+    return doBufferTableTask(tuple, m_applBufferEgressProfileListTable);
 }
 
 /*
@@ -1563,24 +1563,24 @@ task_process_status BufferMgrDynamic::handleBufferPortEgressProfileListTable(Key
  *  - pool in BUFFER_POOL
  *  - profile in BUFFER_PG
  */
-task_process_status BufferMgrDynamic::doBufferTableTask(KeyOpFieldsValuesTuple &t, ProducerStateTable &applTable)
+task_process_status BufferMgrDynamic::doBufferTableTask(KeyOpFieldsValuesTuple &tuple, ProducerStateTable &applTable)
 {
     SWSS_LOG_ENTER();
 
-    string key = kfvKey(t);
+    string key = kfvKey(tuple);
     const string &name = applTable.getTableName();
 
     //transform the separator in key from "|" to ":"
     transformSeperator(key);
 
-    string op = kfvOp(t);
+    string op = kfvOp(tuple);
     if (op == SET_COMMAND)
     {
         vector<FieldValueTuple> fvVector;
 
         SWSS_LOG_INFO("Inserting entry %s|%s from CONFIG_DB to APPL_DB", name.c_str(), key.c_str());
 
-        for (auto i : kfvFieldsValues(t))
+        for (auto i : kfvFieldsValues(tuple))
         {
             //transform the separator in values from "|" to ":"
             if (fvField(i) == "pool")
