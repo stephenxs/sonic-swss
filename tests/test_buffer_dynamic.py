@@ -133,6 +133,11 @@ class TestBufferMgrDyn(object):
 
         return "pg_lossless_" + speed + "_" + cable_length + extra + "_profile"
 
+    def change_cable_length(self, cable_length):
+        cable_lengths = self.config_db.get_entry('CABLE_LENGTH', 'AZURE')
+        cable_lengths['Ethernet0'] = cable_length
+        self.config_db.update_entry('CABLE_LENGTH', 'AZURE', cable_lengths)
+
     def test_changeSpeed(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -185,9 +190,8 @@ class TestBufferMgrDyn(object):
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
 
         # Change to new cable length
-        dvs.runcmd("config interface cable-length Ethernet0 " + self.cableLenTest1)
+        self.change_cable_length(self.cableLenTest1)
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.cableLenTest1)
-        time.sleep(10)
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         self.check_new_profile_in_asic_db(dvs, expectedProfile)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
@@ -197,7 +201,7 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:3-4")
 
         # Change to another cable length
-        dvs.runcmd("config interface cable-length Ethernet0 " + self.cableLenTest2)
+        self.change_cable_length(self.cableLenTest2)
         # Check whether the old profile has been removed
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
 
@@ -210,10 +214,10 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
         # Revert the cable length
-        dvs.runcmd("config interface cable-length Ethernet0 " + self.originalCableLen)
+        self.change_cable_length(self.originalCableLen)
         # Check the BUFFER_PROFILE_TABLE and BUFFER_PG_TABLE
-        # we are not able to check ASIC DB here because sometimes the SAI OID in ASIC DB can be reused
-        # by the newly created profile
+        # we are not able to check whether the SAI OID is removed from ASIC DB here
+        # because sometimes the SAI OID in ASIC DB can be reused for the newly created profile
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
 
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
@@ -242,8 +246,7 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
         # change cable length and check
-        dvs.runcmd("config interface cable-length Ethernet0 " + self.cableLenTest1)
-        time.sleep(10)
+        self.change_cable_length(self.cableLenTest1)
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         expectedProfile = self.make_lossless_profile_name(self.speedToTest1, self.cableLenTest1)
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
@@ -252,7 +255,7 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
         # revert the speed and cable length and check
-        dvs.runcmd("config interface cable-length Ethernet0 " + self.originalCableLen)
+        self.change_cable_length(self.originalCableLen)
         dvs.runcmd("config interface speed Ethernet0 " + self.originalSpeed)
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         self.asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", self.newProfileInAsicDb)
@@ -289,8 +292,7 @@ class TestBufferMgrDyn(object):
         # configure lossless PG 3-4 on interface
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
 
-        dvs.runcmd("config interface cable-length Ethernet0 " + self.cableLenTest1)
-        time.sleep(10)
+        self.change_cable_length(self.cableLenTest1)
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.cableLenTest1)
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
@@ -298,7 +300,8 @@ class TestBufferMgrDyn(object):
         # configure lossless PG 3-4 with headroom override
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': '[BUFFER_PROFILE|test]'})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:test]"})
-        dvs.runcmd("config interface buffer priority-group lossless add Ethernet0 6 test")
+        # configure lossless PG 6 with headroom override
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|6', {'profile': '[BUFFER_PROFILE|test]'})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:test]"})
 
         # update the profile
@@ -333,7 +336,7 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", "test")
         self.asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", self.newProfileInAsicDb)
 
-        dvs.runcmd("config interface cable-length Ethernet0 " + self.originalCableLen)
+        self.change_cable_length(self.originalCableLen)
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
