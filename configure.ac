@@ -83,6 +83,7 @@ CFLAGS_COMMON+=" -Wvariadic-macros"
 CFLAGS_COMMON+=" -Wno-switch-default"
 CFLAGS_COMMON+=" -Wno-long-long"
 CFLAGS_COMMON+=" -Wno-redundant-decls"
+CFLAGS_COMMON+=" -Wno-stringop-overflow"
 
 AC_SUBST(CFLAGS_COMMON)
 
