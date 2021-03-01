@@ -42,6 +42,12 @@ local function iterate_all_items(all_items)
             local range = string.match(all_items[i], "Ethernet%d+:([^%s]+)$")
             local profile = redis.call('HGET', all_items[i], 'profile')
             local index = find_profile(profile)
+            if index == 0 then
+                -- Indicate an error in case the referenced profile hasn't been inserted or has been removed
+                -- It's possible when the orchagent is busy
+                -- The buffermgrd will take care of it and retry later
+                return 1
+            end
             local size
             if string.len(range) == 1 then
                 size = 1
@@ -55,6 +61,7 @@ local function iterate_all_items(all_items)
             end
         end
     end
+    return 0
 end
 
 -- Connect to CONFIG_DB
@@ -97,8 +104,12 @@ end
 local all_pgs = redis.call('KEYS', 'BUFFER_PG*')
 local all_tcs = redis.call('KEYS', 'BUFFER_QUEUE*')
 
-iterate_all_items(all_pgs)
-iterate_all_items(all_tcs)
+local fail_count = 0
+fail_count = fail_count + iterate_all_items(all_pgs)
+fail_count = fail_count + iterate_all_items(all_tcs)
+if fail_count > 0 then
+    return {}
+end
 
 local statistics = {}
 
