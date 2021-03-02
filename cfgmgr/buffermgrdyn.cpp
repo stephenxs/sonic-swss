@@ -1794,6 +1794,13 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
                 bufferPg.static_configured = true;
                 bufferPg.configured_profile_name = profileName;
             }
+
+            if (field != buffer_profile_field_name)
+            {
+                SWSS_LOG_ERROR("BUFFER_PG: Invalid field %s", field.c_str());
+                return task_process_status::task_invalid_entry;
+            }
+
             fvVector.emplace_back(field, value);
             SWSS_LOG_INFO("Inserting BUFFER_PG table field %s value %s", field.c_str(), value.c_str());
         }
