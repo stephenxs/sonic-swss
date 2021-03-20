@@ -1376,15 +1376,15 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
             {
                 bufferPool.dynamic_size = false;
             }
-            if (field == buffer_pool_xoff_field_name)
+            else if (field == buffer_pool_xoff_field_name)
             {
                 newSHPSize = value;
             }
-            if (field == buffer_pool_mode_field_name)
+            else if (field == buffer_pool_mode_field_name)
             {
                 bufferPool.mode = value;
             }
-            if (field == buffer_pool_type_field_name)
+            else if (field == buffer_pool_type_field_name)
             {
                 bufferPool.ingress = (value == buffer_value_ingress);
             }
@@ -1503,32 +1503,32 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                     return task_process_status::task_failed;
                 }
             }
-            if (field == buffer_xon_field_name)
+            else if (field == buffer_xon_field_name)
             {
                 profileApp.xon = value;
             }
-            if (field == buffer_xoff_field_name)
+            else if (field == buffer_xoff_field_name)
             {
                 profileApp.xoff = value;
                 profileApp.lossless = true;
             }
-            if (field == buffer_xon_offset_field_name)
+            else if (field == buffer_xon_offset_field_name)
             {
                 profileApp.xon_offset = value;
             }
-            if (field == buffer_size_field_name)
+            else if (field == buffer_size_field_name)
             {
                 profileApp.size = value;
             }
-            if (field == buffer_dynamic_th_field_name)
+            else if (field == buffer_dynamic_th_field_name)
             {
                 profileApp.threshold = value;
             }
-            if (field == buffer_static_th_field_name)
+            else if (field == buffer_static_th_field_name)
             {
                 profileApp.threshold = value;
             }
-            if (field == buffer_headroom_type_field_name)
+            else if (field == buffer_headroom_type_field_name)
             {
                 profileApp.dynamic_calculated = (value == "dynamic");
                 if (profileApp.dynamic_calculated)
