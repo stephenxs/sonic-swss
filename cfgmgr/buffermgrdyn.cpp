@@ -1862,9 +1862,13 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
         }
         else
         {
-            SWSS_LOG_NOTICE("Inserting BUFFER_PG table entry %s into APPL_DB directly", key.c_str());
-            m_applBufferPgTable.set(key, fvVector);
-            bufferPg.running_profile_name = bufferPg.configured_profile_name;
+            port_info_t &portInfo = m_portInfoLookup[port];
+            if (PORT_ADMIN_DOWN != portInfo.state)
+            {
+                SWSS_LOG_NOTICE("Inserting BUFFER_PG table entry %s into APPL_DB directly", key.c_str());
+                m_applBufferPgTable.set(key, fvVector);
+                bufferPg.running_profile_name = bufferPg.configured_profile_name;
+            }
         }
 
         if (!bufferPg.configured_profile_name.empty())
