@@ -920,8 +920,6 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
         SWSS_LOG_DEBUG("Nothing to do for port %s since no PG configured on it", port.c_str());
     }
 
-    portInfo.state = PORT_READY;
-
     // Remove the old profile which is probably not referenced anymore.
     if (!profilesToBeReleased.empty())
     {
