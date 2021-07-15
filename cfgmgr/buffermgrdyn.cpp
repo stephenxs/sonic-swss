@@ -1148,6 +1148,9 @@ task_process_status BufferMgrDynamic::doUpdateBufferProfileForDynamicTh(buffer_p
             SWSS_LOG_DEBUG("Checking PG %s for dynamic profile %s", key.c_str(), profileName.c_str());
             portsChecked.insert(portName);
 
+            if (port.state != PORT_READY)
+                continue;
+
             rc = refreshPgsForPort(portName, port.speed, port.cable_length, port.mtu);
             if (task_process_status::task_success != rc)
             {
