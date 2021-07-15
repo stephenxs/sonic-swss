@@ -987,8 +987,6 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
         SWSS_LOG_DEBUG("Nothing to do for port %s since no PG configured on it", port.c_str());
     }
 
-    portInfo.state = PORT_READY;
-
     // Remove the old profile which is probably not referenced anymore.
     if (!profilesToBeReleased.empty())
     {
@@ -1452,6 +1450,7 @@ task_process_status BufferMgrDynamic::handlePortStateTable(KeyOpFieldsValuesTupl
                     {
                         if (isNonZero(portInfo.cable_length) && portInfo.state != PORT_ADMIN_DOWN)
                         {
+                            portInfo.state = PORT_READY;
                             refreshPgsForPort(port, portInfo.effective_speed, portInfo.cable_length, portInfo.mtu);
                         }
                     }
