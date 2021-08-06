@@ -258,7 +258,8 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
                 it.second.m_saiObjectId,
                 static_cast<uint32_t>(bufferPoolWatermarkStatIds.size()),
                 reinterpret_cast<const sai_stat_id_t *>(bufferPoolWatermarkStatIds.data()));
-        if (status ==  SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
+            || status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
         {
             SWSS_LOG_NOTICE("Clear watermark failed on %s, rv: %s", it.first.c_str(), sai_serialize_status(status).c_str());
             noWmClrCapability |= bitMask;
@@ -271,7 +272,8 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
                 reinterpret_cast<const sai_stat_id_t *>(bufferSharedHeadroomPoolWatermarkStatIds.data()),
                 SAI_STATS_MODE_READ,
                 counterData.data());
-        if (status ==  SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
+            || status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
         {
             SWSS_LOG_NOTICE("Read shared headroom pool watermark failed on %s, rv: %s", it.first.c_str(), sai_serialize_status(status).c_str());
             noShpWmRdCapability |= bitMask;
