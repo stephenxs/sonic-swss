@@ -214,6 +214,12 @@ bool BufferOrch::isPortReady(const std::string& port_name) const
     return result;
 }
 
+void BufferOrch::clearBufferPoolWatermarkCounterCounterIdList(const sai_object_id_t object_id)
+{
+    string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(object_id);
+    m_flexCounterTable->del(key);
+}
+
 void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
 {
     // This function will be called in FlexCounterOrch when field:value tuple "FLEX_COUNTER_STATUS":"enable"
@@ -501,6 +507,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
 
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
+            clearBufferPoolWatermarkCounterCounterIdList(sai_object);
             sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
