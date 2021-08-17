@@ -22,6 +22,7 @@ typedef struct {
     std::string total_size;
     std::string mode;
     std::string xoff;
+    std::string zero_profile_name;
 } buffer_pool_t;
 
 // State of the profile.
@@ -116,29 +117,39 @@ typedef std::map<std::string, port_info_t> port_info_lookup_t;
 typedef std::map<std::string, buffer_profile_t> buffer_profile_lookup_t;
 //map from name to pool
 typedef std::map<std::string, buffer_pool_t> buffer_pool_lookup_t;
-//port -> headroom override
-typedef std::map<std::string, buffer_profile_t> headroom_override_t;
 //map from pg to info
 typedef std::map<std::string, buffer_pg_t> buffer_pg_lookup_t;
 //map from port to all its pgs
 typedef std::map<std::string, buffer_pg_lookup_t> port_pg_lookup_t;
+//map from object name to its profile
+typedef std::map<std::string, std::string> buffer_object_lookup_t;
+//map from port to all its objects
+typedef std::map<std::string, buffer_object_lookup_t> port_object_lookup_t;
+//map from port to profile_list
+typedef std::map<std::string, std::string> port_profile_list_lookup_t;
 //map from gearbox model to gearbox delay
 typedef std::map<std::string, std::string> gearbox_delay_t;
 
 class BufferMgrDynamic : public Orch
 {
 public:
-    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
+    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo);
     using Orch::doTask;
 
 private:
+    std::string m_platform;
+
     typedef task_process_status (BufferMgrDynamic::*buffer_table_handler)(KeyOpFieldsValuesTuple &t);
     typedef std::map<std::string, buffer_table_handler> buffer_table_handler_map;
     typedef std::pair<std::string, buffer_table_handler> buffer_handler_pair;
 
-    std::string m_platform;
-
     buffer_table_handler_map m_bufferTableHandlerMap;
+
+    typedef task_process_status (BufferMgrDynamic::*buffer_single_item_handler)(const std::string &key, const std::string &port, const KeyOpFieldsValuesTuple &tuple);
+    typedef std::map<std::string, buffer_single_item_handler> buffer_single_item_handler_map;
+    typedef std::pair<std::string, buffer_single_item_handler> buffer_single_item_handler_pair;
+
+    buffer_single_item_handler_map m_bufferSingleItemHandlerMap;
 
     bool m_portInitDone;
     bool m_firstTimeCalculateBufferPool;
@@ -148,6 +159,15 @@ private:
     std::shared_ptr<DBConnector> m_applDb = nullptr;
     SelectableTimer *m_buffermgrPeriodtimer = nullptr;
 
+    // Fields for zero pool and profiles
+    std::vector<KeyOpFieldsValuesTuple> m_zeroPoolAndProfileInfo;
+    std::vector<std::pair<std::string, std::string>> m_zeroPoolAndProfileNames;
+    bool m_zeroProfilesLoaded;
+    std::string m_ingressPgZeroProfileName;
+    std::string m_egressQueueZeroProfileName;
+    std::string m_pgIdsToZero;
+    std::string m_queueIdsToZero;
+
     // PORT and CABLE_LENGTH table and caches
     Table m_cfgPortTable;
     Table m_cfgCableLenTable;
@@ -156,6 +176,8 @@ private:
     // key: port name
     // updated only when a port's speed and cable length updated
     port_info_lookup_t m_portInfoLookup;
+    std::set<std::string> m_adminDownPorts;
+    std::set<std::string> m_pendingApplyZeroProfilePorts;
 
     // BUFFER_POOL table and cache
     ProducerStateTable m_applBufferPoolTable;
@@ -185,15 +207,25 @@ private:
     // 2. refreshPriorityGroupsForPort, speed/cable length updated
     port_pg_lookup_t m_portPgLookup;
 
+    // BUFFER_QUEUE table and caches
+    ProducerStateTable m_applBufferQueueTable;
+    // m_portQueueLookup - the cache for BUFFER_QUEUE table
+    // 1st level key: port name, 2nd level key: queues
+    port_object_lookup_t m_portQueueLookup;
+
+    // BUFFER_INGRESS_PROFILE_LIST table and caches
+    ProducerStateTable m_applBufferIngressProfileListTable;
+    port_profile_list_lookup_t m_portIngressProfileListLookup;
+
+    // BUFFER_EGRESS_PROFILE_LIST table and caches
+    ProducerStateTable m_applBufferEgressProfileListTable;
+    port_profile_list_lookup_t m_portEgressProfileListLookup;
+
     // Other tables
     Table m_cfgLosslessPgPoolTable;
     Table m_cfgDefaultLosslessBufferParam;
 
     Table m_stateBufferMaximumTable;
-
-    ProducerStateTable m_applBufferQueueTable;
-    ProducerStateTable m_applBufferIngressProfileListTable;
-    ProducerStateTable m_applBufferEgressProfileListTable;
 
     Table m_applPortTable;
 
@@ -218,6 +250,8 @@ private:
     // Initializers
     void initTableHandlerMap();
     void parseGearboxInfo(std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
+    void loadZeroPoolAndProfiles();
+    void unloadZeroPoolAndProfiles();
 
     // Tool functions to parse keys and references
     std::string getPgPoolMode();
@@ -246,30 +280,38 @@ private:
     void releaseProfile(const std::string &profile_name);
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
+    task_process_status checkBufferProfileDirection(const std::string &profiles, bool expectIngress);
+    std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
+    void applyZeroProfilesOnPort(const std::string &port);
+    void removeZeroProfilesOnPort(const std::string &port);
+    void applyNormalBufferObjectsOnPort(const std::string &port);
 
     // Main flows
-    task_process_status removeAllPgsFromPort(const std::string &port);
+    task_process_status removeAllBufferObjectsFromPort(const std::string &port);
     task_process_status refreshPgsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
     task_process_status doUpdatePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doRemovePgTask(const std::string &pg_key, const std::string &port);
-    task_process_status doAdminStatusTask(const std::string port, const std::string adminStatus);
     task_process_status doUpdateBufferProfileForDynamicTh(buffer_profile_t &profile);
     task_process_status doUpdateBufferProfileForSize(buffer_profile_t &profile, bool update_pool_size);
 
     // Table update handlers
-    task_process_status handleBufferMaxParam(KeyOpFieldsValuesTuple &t);
-    task_process_status handleDefaultLossLessBufferParam(KeyOpFieldsValuesTuple &t);
-    task_process_status handleCableLenTable(KeyOpFieldsValuesTuple &t);
-    task_process_status handlePortStateTable(KeyOpFieldsValuesTuple &t);
-    task_process_status handlePortTable(KeyOpFieldsValuesTuple &t);
-    task_process_status handleBufferPoolTable(KeyOpFieldsValuesTuple &t);
-    task_process_status handleBufferProfileTable(KeyOpFieldsValuesTuple &t);
-    task_process_status handleOneBufferPgEntry(const std::string &key, const std::string &port, const std::string &op, const KeyOpFieldsValuesTuple &tuple);
-    task_process_status handleBufferPgTable(KeyOpFieldsValuesTuple &t);
-    task_process_status handleBufferQueueTable(KeyOpFieldsValuesTuple &t);
-    task_process_status handleBufferPortIngressProfileListTable(KeyOpFieldsValuesTuple &t);
-    task_process_status handleBufferPortEgressProfileListTable(KeyOpFieldsValuesTuple &t);
-    task_process_status doBufferTableTask(KeyOpFieldsValuesTuple &t, ProducerStateTable &applTable);
+    task_process_status handleBufferMaxParam(KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleDefaultLossLessBufferParam(KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleCableLenTable(KeyOpFieldsValuesTuple &tuple);
+    task_process_status handlePortStateTable(KeyOpFieldsValuesTuple &tuple);
+    task_process_status handlePortTable(KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleBufferPoolTable(KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleBufferProfileTable(KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleSingleBufferPgEntry(const std::string &key, const std::string &port, const KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleSingleBufferQueueEntry(const std::string &key, const std::string &port, const KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleSingleBufferPortProfileListEntry(const std::string &key, bool ingress, const KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleSingleBufferPortIngressProfileListEntry(const std::string &key, const std::string &port, const KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleSingleBufferPortEgressProfileListEntry(const std::string &key, const std::string &port, const KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleBufferObjectTables(KeyOpFieldsValuesTuple &tuple, const std::string &table, bool keyWithIds);
+    task_process_status handleBufferPgTable(KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleBufferQueueTable(KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleBufferPortIngressProfileListTable(KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleBufferPortEgressProfileListTable(KeyOpFieldsValuesTuple &tuple);
     void doTask(Consumer &consumer);
     void doTask(SelectableTimer &timer);
 };
