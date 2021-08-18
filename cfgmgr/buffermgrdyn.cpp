@@ -1045,6 +1045,7 @@ void BufferMgrDynamic::applyZeroProfilesOnPort(const string &port)
         const string &zeroEgressProfileNameList = constructZeroProfileListFromNormalProfileList(egressProfileListRef->second, port);
         fvVector.emplace_back("profile_list", zeroEgressProfileNameList);
         m_applBufferEgressProfileListTable.set(port, fvVector);
+        fvVector.clear();
     }
 }
 
@@ -1063,8 +1064,8 @@ void BufferMgrDynamic::removeZeroProfilesOnPort(const string &port)
 
 void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
 {
-    auto &portQueues = m_portQueueLookup[port];
     vector<FieldValueTuple> fvVector;
+    auto &portQueues = m_portQueueLookup[port];
 
     for (auto &queue : portQueues)
     {
@@ -1075,8 +1076,21 @@ void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
         fvVector.clear();
     }
 
-    fvVector.emplace_back("profile_list", m_portIngressProfileListLookup[port]);
-    fvVector.emplace_back("profile_list", m_portEgressProfileListLookup[port]);
+    auto &ingressProfileList = m_portIngressProfileListLookup[port];
+    if (!ingressProfileList.empty())
+    {
+        fvVector.emplace_back("profile_list", ingressProfileList);
+        m_applBufferIngressProfileListTable.set(port, fvVector);
+        fvVector.clear();
+    }
+
+    auto egressProfileList = m_portEgressProfileListLookup[port];
+    if (!egressProfileList.empty())
+    {
+        fvVector.emplace_back("profile_list", egressProfileList);
+        m_applBufferEgressProfileListTable.set(port, fvVector);
+        fvVector.clear();
+    }
 }
 
 task_process_status BufferMgrDynamic::removeAllBufferObjectsFromPort(const string &port)
@@ -1878,6 +1892,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
                     portInfo.state = PORT_INITIALIZING;
 
                 need_refresh_all_buffer_objects = true;
+                was_admin_down = true;
             }
             else
             {
@@ -1920,7 +1935,6 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         }
         else if (need_refresh_all_buffer_objects)
         {
-            task_status = refreshPgsForPort(port, portInfo.effective_speed, portInfo.cable_length, portInfo.mtu);
             if (was_admin_down)
             {
                 removeZeroProfilesOnPort(port);
@@ -1930,6 +1944,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
                 if (m_adminDownPorts.empty())
                     unloadZeroPoolAndProfiles();
             }
+            task_status = refreshPgsForPort(port, portInfo.effective_speed, portInfo.cable_length, portInfo.mtu);
         }
     }
 

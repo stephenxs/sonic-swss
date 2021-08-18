@@ -33,6 +33,11 @@ local function iterate_all_items(all_items, check_lossless)
     local port
     local fvpairs
     for i = 1, #all_items, 1 do
+        -- XXX_TABLE_KEY_SET or XXX_TABLE_DEL_SET existing means the orchagent hasn't handled all updates
+        -- In this case, the pool sizes are not calculated for now and will retry later
+        if string.sub(all_items[i], -4, -1) == "_SET" then
+            return 1
+        end
         -- Count the number of priorities or queues in each BUFFER_PG or BUFFER_QUEUE item
         -- For example, there are:
         --     3 queues in 'BUFFER_QUEUE_TABLE:Ethernet0:0-2'
@@ -76,10 +81,15 @@ end
 local function iterate_profile_list(all_items)
     local port
     for i = 1, #all_items, 1 do
+        -- XXX_TABLE_KEY_SET or XXX_TABLE_DEL_SET existing means the orchagent hasn't handled all updates
+        -- In this case, the pool sizes are not calculated for now and will retry later
+        if string.sub(all_items[i], -4, -1) == "_SET" then
+            return 1
+        end
         port = string.match(all_items[i], "Ethernet%d+")
         local profile_list = redis.call('HGET', all_items[i], 'profile_list')
         if not profile_list then
-            return
+            return 0
         end
         for profile_name in string.gmatch(profile_list, "([^,]+)") do
             -- The format of profile_list is profile_name,profile_name
@@ -102,6 +112,8 @@ local function iterate_profile_list(all_items)
             profiles[profile_name] = profile_ref_count + 1
         end
     end
+
+    return 0
 end
 
 -- Connect to CONFIG_DB
@@ -209,8 +221,11 @@ end
 local all_ingress_profile_lists = redis.call('KEYS', 'BUFFER_PORT_INGRESS_PROFILE_LIST*')
 local all_egress_profile_lists = redis.call('KEYS', 'BUFFER_PORT_EGRESS_PROFILE_LIST*')
 
-iterate_profile_list(all_ingress_profile_lists)
-iterate_profile_list(all_egress_profile_lists)
+fail_count = fail_count + iterate_profile_list(all_ingress_profile_lists)
+fail_count = fail_count + iterate_profile_list(all_egress_profile_lists)
+if fail_count > 0 then
+    return {}
+end
 
 local statistics = {}
 
