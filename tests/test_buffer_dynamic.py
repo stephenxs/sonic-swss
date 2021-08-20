@@ -551,6 +551,9 @@ class TestBufferMgrDyn(object):
 
         lossy_pg_reference_config_db = '[BUFFER_PROFILE|ingress_lossy_profile]'
         lossy_pg_reference_appl_db = '[BUFFER_PROFILE_TABLE:ingress_lossy_profile]'
+        lossy_queue_reference_config_db = '[BUFFER_PROFILE|egress_lossy_profile]'
+        lossy_queue_reference_appl_db = '[BUFFER_PROFILE_TABLE:egress_lossy_profile]'
+        lossless_queue_reference_appl_db = '[BUFFER_PROFILE_TABLE:egress_lossless_profile]'
 
         # Startup interface
         dvs.runcmd('config interface startup Ethernet0')
@@ -565,15 +568,22 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:0")
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:3-4")
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE", expectedProfile)
+        self.app_db.wait_for_deleted_entry("BUFFER_QUEUE_TABLE", "Ethernet0:0-2")
+        self.app_db.wait_for_deleted_entry("BUFFER_QUEUE_TABLE", "Ethernet0:3-4")
+        self.app_db.wait_for_deleted_entry("BUFFER_QUEUE_TABLE", "Ethernet0:5-6")
 
         # Add extra lossy and lossless PGs when a port is administratively down
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|1', {'profile': lossy_pg_reference_config_db})
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|6', {'profile': 'NULL'})
 
+        # Add extra queue when a port is administratively down
+        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|7', {"profile": lossy_queue_reference_config_db})
+
         # Make sure they have not been added to APPL_DB
         time.sleep(30)
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:1")
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:6")
+        self.app_db.wait_for_deleted_entry("BUFFER_QUEUE_TABLE", "Ethernet0:7")
 
         # Startup port and check whether all the PGs haved been added
         dvs.runcmd("config interface startup Ethernet0")
@@ -581,10 +591,17 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:1", {"profile": lossy_pg_reference_appl_db})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
+        self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "Ethernet0:0-2", {"profile": lossy_queue_reference_appl_db})
+        self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "Ethernet0:5-6", {"profile": lossy_queue_reference_appl_db})
+        self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "Ethernet0:7", {"profile": lossy_queue_reference_appl_db})
+        self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "Ethernet0:3-4", {"profile": lossless_queue_reference_appl_db})
 
         # Remove lossless PG 3-4 on interface
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|6')
+
+        # Remove lossy queue 7 on interface
+        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|7')
 
         # Shutdown interface
         dvs.runcmd("config interface shutdown Ethernet0")
