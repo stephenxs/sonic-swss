@@ -4007,9 +4007,16 @@ void PortsOrch::initializePortMaximumHeadroom(Port &port)
         return;
     }
 
-    vector<FieldValueTuple> fvVector;
     port.m_maximum_headroom = attr.value.u32;
+}
+
+void PortsOrch::initializePortBufferMaximumParameters(Port &port)
+{
+    vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("max_headroom_size", to_string(port.m_maximum_headroom));
+    fvVector.emplace_back("max_priority_groups", to_string(port.m_priority_group_ids.size()));
+    fvVector.emplace_back("max_queues", to_string(port.m_queue_ids.size()));
+
     m_stateBufferMaximumValueTable->set(port.m_alias, fvVector);
 }
 
@@ -4022,6 +4029,7 @@ bool PortsOrch::initializePort(Port &port)
     initializePriorityGroups(port);
     initializeQueues(port);
     initializePortMaximumHeadroom(port);
+    initializePortBufferMaximumParameters(port);
 
     /* Create host interface */
     if (!addHostIntfs(port, port.m_alias, port.m_hif_id))
