@@ -1005,28 +1005,61 @@ string BufferMgrDynamic::constructZeroProfileListFromNormalProfileList(const str
     return zeroProfileNameList;
 }
 
-void BufferMgrDynamic::applyZeroProfilesOnPort(const string &port)
+task_process_status BufferMgrDynamic::applyZeroProfilesOnPort(const string &port)
 {
     // No action as no zero profiles defined.
     if (m_zeroPoolAndProfileInfo.empty())
-        return;
+    {
+        return task_process_status::task_success;
+    }
 
     if (!m_zeroProfilesLoaded)
         loadZeroPoolAndProfiles();
 
     vector<FieldValueTuple> fvVector;
+    auto &portInfo = m_portInfoLookup[port];
+    const string &portPrefix = port + delimiter;
 
-    if (!m_pgIdsToZero.empty() && !m_ingressPgZeroProfileName.empty())
+    if (!m_ingressPgZeroProfileName.empty())
     {
+        string key;
+        if (!m_pgIdsToZero.empty())
+        {
+            key = portPrefix + m_pgIdsToZero;
+        }
+        else if (!portInfo.pgs_to_reclaim.empty())
+        {
+            key = portPrefix + portInfo.pgs_to_reclaim;
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Port %s's priority-group IDs to be cleared are not ready, need retry", port.c_str());
+            return task_process_status::task_need_retry;
+        }
+
         fvVector.emplace_back("profile", m_ingressPgZeroProfileName);
-        m_applBufferPgTable.set(port + delimiter + m_pgIdsToZero, fvVector);
+        m_applBufferPgTable.set(key, fvVector);
         fvVector.clear();
     }
 
-    if (!m_queueIdsToZero.empty() && !m_egressQueueZeroProfileName.empty())
+    if (!m_egressQueueZeroProfileName.empty())
     {
+        string key;
+        if (!m_queueIdsToZero.empty())
+        {
+            key = portPrefix + m_queueIdsToZero;
+        }
+        else if (!portInfo.queues_to_reclaim.empty())
+        {
+            key = portPrefix + portInfo.queues_to_reclaim;
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Port %s's queue IDs to be cleared are not ready, need retry", port.c_str());
+            return task_process_status::task_need_retry;
+        }
         fvVector.emplace_back("profile", m_egressQueueZeroProfileName);
-        m_applBufferQueueTable.set(port + delimiter + m_queueIdsToZero, fvVector);
+        m_applBufferQueueTable.set(key, fvVector);
         fvVector.clear();
     }
 
@@ -1047,6 +1080,8 @@ void BufferMgrDynamic::applyZeroProfilesOnPort(const string &port)
         m_applBufferEgressProfileListTable.set(port, fvVector);
         fvVector.clear();
     }
+
+    return task_process_status::task_success;
 }
 
 void BufferMgrDynamic::removeZeroProfilesOnPort(const string &port)
@@ -1541,25 +1576,76 @@ task_process_status BufferMgrDynamic::doUpdateBufferProfileForSize(buffer_profil
 
 task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTuple &tuple)
 {
-    string op = kfvOp(tuple);
+    string &op = kfvOp(tuple);
+    string &key = kfvKey(tuple);
 
     if (op == SET_COMMAND)
     {
-        for (auto i : kfvFieldsValues(tuple))
+        if (key != "global")
         {
-            if (fvField(i) == "mmu_size")
+            const auto &portSearchRef = m_portInfoLookup.find(key);
+            if (portSearchRef == m_portInfoLookup.end())
             {
-                m_mmuSize = fvValue(i);
-                if (!m_mmuSize.empty())
+                SWSS_LOG_INFO("BUFFER_MAX_PARAM: Port %s is not configured, need retry", key.c_str());
+                return task_process_status::task_need_retry;
+            }
+
+            auto &portInfo = portSearchRef->second;
+            for (auto i : kfvFieldsValues(tuple))
+            {
+                auto &value = fvValue(i);
+                if (fvField(i) == "max_priority_groups")
                 {
-                    m_mmuSizeNumber = atol(m_mmuSize.c_str());
+                    auto pgCount = atol(value.c_str());
+                    if (pgCount <= 0)
+                    {
+                        SWSS_LOG_ERROR("BUFFER_MAX_PARAM: Invaild priority group count %s of port %s", value.c_str(), key.c_str());
+                        return task_process_status::task_failed;
+                    }
+
+                    SWSS_LOG_INFO("BUFFER_MAX_PARAM: Got port %s's max priority group %s", key.c_str(), value.c_str());
+
+                    if (pgCount > 1)
+                        portInfo.pgs_to_reclaim = "0-" + to_string(pgCount - 1);
+                    else
+                        portInfo.pgs_to_reclaim = "0";
                 }
-                if (0 == m_mmuSizeNumber)
+                else if (fvField(i) == "max_queues")
                 {
-                    SWSS_LOG_ERROR("BUFFER_MAX_PARAM: Got invalid mmu size %s", m_mmuSize.c_str());
-                    return task_process_status::task_failed;
+                    auto queueCount = atol(value.c_str());
+                    if (queueCount <= 0)
+                    {
+                        SWSS_LOG_ERROR("BUFFER_MAX_PARAM: Invaild queue count %s of port %s", value.c_str(), key.c_str());
+                        return task_process_status::task_failed;
+                    }
+
+                    SWSS_LOG_INFO("BUFFER_MAX_PARAM: Got port %s's max queue %s", key.c_str(), value.c_str());
+
+                    if (queueCount > 1)
+                        portInfo.queues_to_reclaim = "0-" + to_string(queueCount - 1);
+                    else
+                        portInfo.queues_to_reclaim = "0";
                 }
-                SWSS_LOG_DEBUG("Handling Default Lossless Buffer Param table field mmu_size %s", m_mmuSize.c_str());
+            }
+        }
+        else
+        {
+            for (auto i : kfvFieldsValues(tuple))
+            {
+                if (fvField(i) == "mmu_size")
+                {
+                    m_mmuSize = fvValue(i);
+                    if (!m_mmuSize.empty())
+                    {
+                        m_mmuSizeNumber = atol(m_mmuSize.c_str());
+                    }
+                    if (0 == m_mmuSizeNumber)
+                    {
+                        SWSS_LOG_ERROR("BUFFER_MAX_PARAM: Got invalid mmu size %s", m_mmuSize.c_str());
+                        return task_process_status::task_failed;
+                    }
+                    SWSS_LOG_DEBUG("Handling Default Lossless Buffer Param table field mmu_size %s", m_mmuSize.c_str());
+                }
             }
         }
     }

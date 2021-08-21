@@ -102,6 +102,8 @@ typedef struct {
     std::string supported_speeds;
 
     long lane_count;
+    std::string queues_to_reclaim;
+    std::string pgs_to_reclaim;
 } port_info_t;
 
 //TODO:
@@ -282,7 +284,7 @@ private:
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
     task_process_status checkBufferProfileDirection(const std::string &profiles, bool expectIngress);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
-    void applyZeroProfilesOnPort(const std::string &port);
+    task_process_status applyZeroProfilesOnPort(const std::string &port);
     void removeZeroProfilesOnPort(const std::string &port);
     void applyNormalBufferObjectsOnPort(const std::string &port);
 
