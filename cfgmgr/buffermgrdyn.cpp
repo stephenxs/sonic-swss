@@ -2283,8 +2283,14 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
         }
 
         // Don't insert dynamically calculated profiles into APPL_DB
-        if (profileApp.lossless && profileApp.ingress)
+        if (profileApp.lossless)
         {
+            if (!profileApp.ingress)
+            {
+                SWSS_LOG_ERROR("BUFFER_PROFILE %s is ingress but referencing an egress pool %s", profileName.c_str(), profileApp.pool_name.c_str());
+                return task_process_status::task_success;
+            }
+
             if (profileApp.dynamic_calculated)
             {
                 profileApp.state = PROFILE_NORMAL;
