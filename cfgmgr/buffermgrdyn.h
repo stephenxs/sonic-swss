@@ -196,9 +196,6 @@ private:
     // 2. Dynamically calculated headroom info stored in APPL_BUFFER_PROFILE
     // key: profile name
     buffer_profile_lookup_t m_bufferProfileLookup;
-    // A set where the ignored profiles are stored.
-    // A PG that reference an ignored profile should also be ignored.
-    std::set<std::string> m_bufferProfileIgnored;
 
     // BUFFER_PG table and caches
     ProducerStateTable m_applBufferPgTable;

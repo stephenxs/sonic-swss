@@ -2312,8 +2312,6 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
         {
             SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been inserted into APPL_DB directly", profileName.c_str());
             updateBufferProfileToDb(profileName, profileApp);
-
-            m_bufferProfileIgnored.insert(profileName);
         }
     }
     else if (op == DEL_COMMAND)
@@ -2350,7 +2348,6 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
             }
 
             m_bufferProfileLookup.erase(profileName);
-            m_bufferProfileIgnored.erase(profileName);
         }
         else
         {
@@ -2410,22 +2407,11 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                 auto searchRef = m_bufferProfileLookup.find(profileName);
                 if (searchRef == m_bufferProfileLookup.end())
                 {
-                    if (m_bufferProfileIgnored.find(profileName) != m_bufferProfileIgnored.end())
-                    {
-                        // Referencing an ignored profile, the PG should be ignored as well
-                        ignored = true;
-                        bufferPg.dynamic_calculated = false;
-                        bufferPg.lossless = false;
-                        bufferPg.configured_profile_name = profileName;
-                    }
-                    else
-                    {
-                        // In this case, we shouldn't set the dynamic calculated flag to true
-                        // It will be updated when its profile configured.
-                        bufferPg.dynamic_calculated = false;
-                        SWSS_LOG_WARN("Profile %s hasn't been configured yet, skip", profileName.c_str());
-                        return task_process_status::task_need_retry;
-                    }
+                    // In this case, we shouldn't set the dynamic calculated flag to true
+                    // It will be updated when its profile configured.
+                    bufferPg.dynamic_calculated = false;
+                    SWSS_LOG_WARN("Profile %s hasn't been configured yet, skip", profileName.c_str());
+                    return task_process_status::task_need_retry;
                 }
                 else
                 {
