@@ -184,8 +184,6 @@ void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple
 
 void BufferMgrDynamic::loadZeroPoolAndProfiles()
 {
-    set<string> zeroPoolNameSet;
-
     for (auto &kfv : m_zeroPoolAndProfileInfo)
     {
         auto &table_key = kfvKey(kfv);
@@ -226,7 +224,7 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
         {
             m_applBufferPoolTable.set(key, kfvFieldsValues(kfv));
             SWSS_LOG_INFO("Loaded zero pool %s to APPL_DB", key.c_str());
-            zeroPoolNameSet.insert(key);
+            m_zeroPoolNameSet.insert(key);
         }
         else if (table == APP_BUFFER_PROFILE_TABLE_NAME)
         {
@@ -264,7 +262,7 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                                            fvValue(fv).c_str());
                         }
                     }
-                    else if (zeroPoolNameSet.find(poolName) == zeroPoolNameSet.end())
+                    else if (m_zeroPoolNameSet.find(poolName) == m_zeroPoolNameSet.end())
                     {
                         SWSS_LOG_NOTICE("Profile %s is not loaded as the referenced pool %s is not defined",
                                         key.c_str(),
@@ -272,6 +270,8 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                         poolNotFound = true;
                         break;
                     }
+
+                    m_zeroProfiles.emplace_back(key, poolName);
                 }
             }
             if (poolNotFound)
@@ -286,8 +286,6 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
             SWSS_LOG_ERROR("Unknown keys %s with zero table name %s isn't loaded to APPL_DB", key.c_str(), table.c_str());
             continue;
         }
-
-        m_zeroPoolAndProfileNames.emplace_back(table, key);
     }
 
     m_zeroProfilesLoaded = true;
@@ -295,28 +293,30 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
 
 void BufferMgrDynamic::unloadZeroPoolAndProfiles()
 {
-    for (auto &table_key : m_zeroPoolAndProfileNames)
+    for (auto &zeroProfile : m_zeroProfiles)
     {
-        auto &table = table_key.first;
-        auto &key = table_key.second;
+        auto &zeroProfileName = zeroProfile.first;
+        auto &poolReferenced = zeroProfile.second;
 
-        if (table == APP_BUFFER_POOL_TABLE_NAME)
+        auto poolSearchRef = m_bufferPoolLookup.find(poolReferenced);
+        if (poolSearchRef != m_bufferPoolLookup.end())
         {
-            m_applBufferPoolTable.del(key);
-            SWSS_LOG_INFO("Unloaded zero pool %s to APPL_DB", key.c_str());
+            auto &poolObj = poolSearchRef->second;
+            poolObj.zero_profile_name.clear();
         }
-        else if (table == APP_BUFFER_PROFILE_TABLE_NAME)
-        {
-            auto poolSearchRef = m_bufferPoolLookup.find(key);
-            if (poolSearchRef != m_bufferPoolLookup.end())
-            {
-                auto &poolObj = poolSearchRef->second;
-                poolObj.zero_profile_name.clear();
-            }
-            m_applBufferProfileTable.del(key);
-            SWSS_LOG_INFO("Unloaded zero profile %s to APPL_DB", key.c_str());
-        }
+        m_applBufferProfileTable.del(zeroProfileName);
+        SWSS_LOG_INFO("Unloaded zero profile %s from APPL_DB", zeroProfileName.c_str());
     }
+
+    m_zeroProfiles.clear();
+
+    for (auto &zeroPool : m_zeroPoolNameSet)
+    {
+        m_applBufferPoolTable.del(zeroPool);
+        SWSS_LOG_INFO("Unloaded zero pool %s to APPL_DB", zeroPool.c_str());
+    }
+
+    m_zeroPoolNameSet.clear();
 
     m_zeroProfilesLoaded = false;
 }
@@ -1052,7 +1052,7 @@ string BufferMgrDynamic::constructZeroProfileListFromNormalProfileList(const str
     return zeroProfileNameList;
 }
 
-task_process_status BufferMgrDynamic::applyZeroProfilesOnPort(const string &port)
+task_process_status BufferMgrDynamic::applyZeroProfilesOnPort(port_info_t &portInfo, const string &portName)
 {
     // No action as no zero profiles defined.
     if (m_zeroPoolAndProfileInfo.empty())
@@ -1064,8 +1064,7 @@ task_process_status BufferMgrDynamic::applyZeroProfilesOnPort(const string &port
         loadZeroPoolAndProfiles();
 
     vector<FieldValueTuple> fvVector;
-    auto &portInfo = m_portInfoLookup[port];
-    const string &portPrefix = port + delimiter;
+    const string &portPrefix = portName + delimiter;
 
     if (!m_ingressPgZeroProfileName.empty())
     {
@@ -1080,7 +1079,7 @@ task_process_status BufferMgrDynamic::applyZeroProfilesOnPort(const string &port
         }
         else
         {
-            SWSS_LOG_NOTICE("Port %s's priority-group IDs to be cleared are not ready, need retry", port.c_str());
+            SWSS_LOG_NOTICE("Port %s's priority-group IDs to be cleared are not ready, need retry", portName.c_str());
             return task_process_status::task_need_retry;
         }
 
@@ -1102,7 +1101,7 @@ task_process_status BufferMgrDynamic::applyZeroProfilesOnPort(const string &port
         }
         else
         {
-            SWSS_LOG_NOTICE("Port %s's queue IDs to be cleared are not ready, need retry", port.c_str());
+            SWSS_LOG_NOTICE("Port %s's queue IDs to be cleared are not ready, need retry", portName.c_str());
             return task_process_status::task_need_retry;
         }
         fvVector.emplace_back("profile", m_egressQueueZeroProfileName);
@@ -1110,37 +1109,43 @@ task_process_status BufferMgrDynamic::applyZeroProfilesOnPort(const string &port
         fvVector.clear();
     }
 
-    const auto &ingressProfileListRef = m_portIngressProfileListLookup.find(port);
+    const auto &ingressProfileListRef = m_portIngressProfileListLookup.find(portName);
     if (ingressProfileListRef != m_portIngressProfileListLookup.end())
     {
-        const string &zeroIngressProfileNameList = constructZeroProfileListFromNormalProfileList(ingressProfileListRef->second, port);
+        const string &zeroIngressProfileNameList = constructZeroProfileListFromNormalProfileList(ingressProfileListRef->second, portName);
         fvVector.emplace_back("profile_list", zeroIngressProfileNameList);
-        m_applBufferIngressProfileListTable.set(port, fvVector);
+        m_applBufferIngressProfileListTable.set(portName, fvVector);
         fvVector.clear();
     }
 
-    const auto &egressProfileListRef = m_portEgressProfileListLookup.find(port);
+    const auto &egressProfileListRef = m_portEgressProfileListLookup.find(portName);
     if (egressProfileListRef != m_portEgressProfileListLookup.end())
     {
-        const string &zeroEgressProfileNameList = constructZeroProfileListFromNormalProfileList(egressProfileListRef->second, port);
+        const string &zeroEgressProfileNameList = constructZeroProfileListFromNormalProfileList(egressProfileListRef->second, portName);
         fvVector.emplace_back("profile_list", zeroEgressProfileNameList);
-        m_applBufferEgressProfileListTable.set(port, fvVector);
+        m_applBufferEgressProfileListTable.set(portName, fvVector);
         fvVector.clear();
     }
 
     return task_process_status::task_success;
 }
 
-void BufferMgrDynamic::removeZeroProfilesOnPort(const string &port)
+void BufferMgrDynamic::removeZeroProfilesOnPort(port_info_t &portInfo, const string &portName)
 {
-    if (!m_pgIdsToZero.empty() && !m_ingressPgZeroProfileName.empty())
+    if (!m_ingressPgZeroProfileName.empty())
     {
-        m_applBufferPgTable.del(port + delimiter + m_pgIdsToZero);
+        if (!m_pgIdsToZero.empty())
+            m_applBufferPgTable.del(portName + delimiter + m_pgIdsToZero);
+        else if (!portInfo.pgs_to_reclaim.empty())
+            m_applBufferPgTable.del(portName + delimiter + portInfo.pgs_to_reclaim);
     }
 
-    if (!m_queueIdsToZero.empty() && !m_egressQueueZeroProfileName.empty())
+    if (!m_egressQueueZeroProfileName.empty())
     {
-        m_applBufferQueueTable.del(port + delimiter + m_queueIdsToZero);
+        if (!m_queueIdsToZero.empty())
+            m_applBufferQueueTable.del(portName + delimiter + m_queueIdsToZero);
+        else if (!portInfo.queues_to_reclaim.empty())
+            m_applBufferQueueTable.del(portName + delimiter + portInfo.queues_to_reclaim);
     }
 }
 
@@ -2066,7 +2071,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
             else
             {
                 removeAllBufferObjectsFromPort(port);
-                applyZeroProfilesOnPort(port);
+                applyZeroProfilesOnPort(portInfo, port);
                 checkSharedBufferPoolSize();
             }
 
@@ -2076,7 +2081,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         {
             if (was_admin_down)
             {
-                removeZeroProfilesOnPort(port);
+                removeZeroProfilesOnPort(portInfo, port);
                 applyNormalBufferObjectsOnPort(port);
                 m_adminDownPorts.erase(port);
                 m_pendingApplyZeroProfilePorts.erase(port);
@@ -2821,7 +2826,7 @@ void BufferMgrDynamic::handlePendingBufferObjects()
             for ( auto &port : m_pendingApplyZeroProfilePorts)
             {
                 removeAllBufferObjectsFromPort(port);
-                applyZeroProfilesOnPort(port);
+                applyZeroProfilesOnPort(m_portInfoLookup[port], port);
 
                 SWSS_LOG_NOTICE("Admin-down port %s is handled because buffer pools are configured", port.c_str());
             }

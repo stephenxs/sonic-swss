@@ -164,7 +164,8 @@ private:
 
     // Fields for zero pool and profiles
     std::vector<KeyOpFieldsValuesTuple> m_zeroPoolAndProfileInfo;
-    std::vector<std::pair<std::string, std::string>> m_zeroPoolAndProfileNames;
+    std::set<std::string> m_zeroPoolNameSet;
+    std::vector<std::pair<std::string, std::string>> m_zeroProfiles;
     bool m_zeroProfilesLoaded;
     std::string m_ingressPgZeroProfileName;
     std::string m_egressQueueZeroProfileName;
@@ -283,8 +284,8 @@ private:
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
     task_process_status checkBufferProfileDirection(const std::string &profiles, bool expectIngress);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
-    task_process_status applyZeroProfilesOnPort(const std::string &port);
-    void removeZeroProfilesOnPort(const std::string &port);
+    task_process_status applyZeroProfilesOnPort(port_info_t &portInfo, const std::string &port);
+    void removeZeroProfilesOnPort(port_info_t &portInfo, const std::string &port);
     void applyNormalBufferObjectsOnPort(const std::string &port);
     void handlePendingBufferObjects();
 
