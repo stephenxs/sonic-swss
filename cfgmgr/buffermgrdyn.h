@@ -154,7 +154,8 @@ private:
     buffer_single_item_handler_map m_bufferSingleItemHandlerMap;
 
     bool m_portInitDone;
-    bool m_firstTimeCalculateBufferPool;
+    bool m_bufferPoolReady;
+    bool m_bufferObjectsPending;
 
     std::string m_configuredSharedHeadroomPoolSize;
 
@@ -271,7 +272,8 @@ private:
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
     void updateBufferProfileToDb(const std::string &name, const buffer_profile_t &profile);
-    void updateBufferPgToDb(const std::string &key, const std::string &profile, bool add);
+    void updateBufferObjectToDb(const std::string &key, const std::string &profile, bool add, bool isPg);
+    void updateBufferObjectListToDb(const std::string &key, const std::string &profileList, bool ingress);
 
     // Meta flows
     bool needRefreshPortDueToEffectiveSpeed(port_info_t &portInfo, std::string &portName);
@@ -287,6 +289,7 @@ private:
     task_process_status applyZeroProfilesOnPort(const std::string &port);
     void removeZeroProfilesOnPort(const std::string &port);
     void applyNormalBufferObjectsOnPort(const std::string &port);
+    void handlePendingBufferObjects();
 
     // Main flows
     task_process_status removeAllBufferObjectsFromPort(const std::string &port);

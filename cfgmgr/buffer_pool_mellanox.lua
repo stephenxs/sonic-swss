@@ -116,6 +116,38 @@ local function iterate_profile_list(all_items)
     return 0
 end
 
+local function fetch_buffer_pool_size_from_appldb()
+    local buffer_pools = {}
+    redis.call('SELECT', config_db)
+    local buffer_pool_keys = redis.call('KEYS', 'BUFFER_POOL|*')
+    local pool_name
+    for i = 1, #buffer_pool_keys, 1 do
+         local size = redis.call('HGET', buffer_pool_keys[i], 'size')
+         if not size then
+             pool_name = string.match(buffer_pool_keys[i], "BUFFER_POOL|([^%s]+)$")
+             table.insert(buffer_pools, pool_name)
+         end
+    end
+
+    redis.call('SELECT', appl_db)
+    buffer_pool_keys = redis.call('KEYS', 'BUFFER_POOL_TABLE:*')
+    local size
+    local xoff
+    local output
+    for i = 1, #buffer_pools, 1 do
+        size = redis.call('HGET', 'BUFFER_POOL_TABLE:' .. buffer_pools[i], 'size')
+        if not size then
+            size = "0"
+        end
+        xoff = redis.call('HGET', 'BUFFER_POOL_TABLE:' .. buffer_pools[i], 'xoff')
+        if not xoff then
+            table.insert(result, buffer_pools[i] .. ':' .. size)
+        else
+            table.insert(result, buffer_pools[i] .. ':' .. size .. ':' .. xoff)
+        end
+    end
+end
+
 -- Connect to CONFIG_DB
 redis.call('SELECT', config_db)
 
@@ -215,7 +247,8 @@ local fail_count = 0
 fail_count = fail_count + iterate_all_items(all_pgs, true)
 fail_count = fail_count + iterate_all_items(all_tcs, false)
 if fail_count > 0 then
-    return {}
+    fetch_buffer_pool_size_from_appldb()
+    return result
 end
 
 local all_ingress_profile_lists = redis.call('KEYS', 'BUFFER_PORT_INGRESS_PROFILE_LIST*')
@@ -224,7 +257,8 @@ local all_egress_profile_lists = redis.call('KEYS', 'BUFFER_PORT_EGRESS_PROFILE_
 fail_count = fail_count + iterate_profile_list(all_ingress_profile_lists)
 fail_count = fail_count + iterate_profile_list(all_egress_profile_lists)
 if fail_count > 0 then
-    return {}
+    fetch_buffer_pool_size_from_appldb()
+    return result
 end
 
 local statistics = {}
