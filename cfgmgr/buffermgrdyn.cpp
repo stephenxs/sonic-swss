@@ -182,6 +182,31 @@ void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple
     }
 }
 
+/*
+ * Zero buffer pools and profiles are introduced for reclaiming reserved buffer on unused ports.
+ *
+ * They are loaded into buffer manager through a json file provided from CLI on a per-platform basis
+ * and will be applied to APPL_DB on the ports once they are admin down.
+ * They are removed from APPL_DB once all ports are admin up.
+ * The zero profiles are removed first and then the zero pools. This is to respect the dependency between them.
+ *
+ * The keys can be in format of:
+ *  - <TABLE NAME>|<object name>: represents a zero buffer object, like a zero buffer pool or zero buffer profile
+ *    All necessary fields of the object should be provided in the json file according to the type of the object.
+ *    For the buffer profiles, if the buffer pools referenced are the normal pools, like {ingress|egress}_{lossless|lossy}_pool,
+ *    the zero profile name will be stored in the referenced pool's "zero_profile_name" field for the purpose of
+ *    constructing the zero profile list or providing the zero profiles for PGs or queues.
+ *
+ *  - ids_to_reclaim: represents the ids required for reclaiming unused buffers, including:
+ *     - pgs_to_reclaim, represents the PGs on which the zero profiles will be applied for reclaiming unused buffers
+ *       If it is not provided, zero profiles will be applied on all PGs.
+ *     - queues_to_reclaim, represents the queues on which the zero profiles will be applied
+ *       If it is not provided, zero profiles will be applied on all queues.
+ *     - ingress_zero_profile, represents the zero buffer profille which will be applied on PGs for reclaiming unused buffer.
+ *       If it is not provided, the zero profile of the pool referenced by "ingress_lossy_pool" will be used.
+ *    The number of queues and PGs are pushed into BUFFER_MAX_PARAM table in STATE_DB at the beginning of ports orchagent
+ *    and will be learnt by buffer manager when it's starting.
+ */
 void BufferMgrDynamic::loadZeroPoolAndProfiles()
 {
     for (auto &kfv : m_zeroPoolAndProfileInfo)
@@ -1024,6 +1049,43 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
     return result;
 }
 
+/*
+ * The following functions are defnied for reclaiming reserved buffers
+ *  - constructZeroProfileListFromNormalProfileList
+ *  - applyZeroProfilesOnPort
+ *  - removeZeroProfilesOnPort
+ *  - applyNormalBufferObjectsOnPort, handling queues and profile lists.
+ *    The profile groups are handle by refreshPgsForPort
+ *  - removeAllBufferObjectsFromPort, handling priority groups and queues.
+ *    The profile lists are not allowed to be removed for now.
+ *
+ * The overall logic of reclaiming reserved buffers is handled in handlePortTable:
+ * Shutdown flow (to reclaim unused buffer):
+ *  1. removeAllBufferObjectsFromPort
+ *  2. applyZeroProfilesOnPort
+ * Start up flow (to reserved buffer for the port)
+ *  1. removeZeroProfilesOnPort
+ *  2. applyNormalBufferObjectsOnPort
+ *  3. refreshPgsForPort
+ * The zero profiles are not override the normal profiles when the port is shut down because they don't share the same index.
+ * Taking the queues as an example, the normal profiles have the 0-2, 3-4, 5-6 as indexes while the zero profiles can have 0-7 as indexes
+ */
+
+/*
+ * constructZeroProfileListFromNormalProfileList
+ *  Tool function for constructing zero profile list from normal profile list.
+ *  There should be one buffer profile for each buffer pool on each side (ingress/egress) in the profile_list
+ *  in BUFFER_PORT_INGRESS_PROFILE_LIST and BUFFER_PORT_EGRESS_PROFILE_LIST table.
+ *  For example, on ingress side, there are ingress_lossless_profile and ingress_lossy_profile in the profile list
+ *  for buffer pools ingress_lossless_pool and ingress_lossy_pool respectively.
+ *  There should be one zero profile for each pool in the profile_list when reclaiming buffer on a port as well.
+ *  The arguments is the normal profile list and the port.
+ *  The logic is:
+ *    For each buffer profile in the list
+ *    1. Fetch the buffer pool referenced by the profile
+ *    2. Fetch the zero buffer profile of the buffer pool. The pool is skipped in case there is no zero buffer profile defined for it.
+ *    3. Construct the zero buffer profile by joining all zero buffer profiles, separating by ","
+ */
 string BufferMgrDynamic::constructZeroProfileListFromNormalProfileList(const string &normalProfileList, const string &port)
 {
     string zeroProfileNameList;
@@ -1052,6 +1114,29 @@ string BufferMgrDynamic::constructZeroProfileListFromNormalProfileList(const str
     return zeroProfileNameList;
 }
 
+/*
+ * applyZeroProfilesOnPort
+ * Apply zero profiles and zero profile lists on the port.
+ * Called when a port is shut down.
+ *
+ * Arguments:
+ *  portInfo, represents the port information of the port
+ *  portName, represents the name of the port
+ * Return:
+ *  task_process_status, represents whether it is successfully handled.
+ *
+ * The flow:
+ * 1. Skip the whole function if there is no zero pool and zero profiles information provided on the platform.
+ *    In this case, removing the buffer objects (queues and priority groups) suffices for reclaiming the reserved buffer.
+ * 2. Load the zero pools and profiles into APPL_DB if they haven't been.
+ * 3. Handle priority group, and queues, which shares the common logci:
+ *    - Skip the buffer object if there is no zero profile provided for it.
+ *      In that case, removing the buffer object should suffice for reclaiming buffer.
+ *    - Apply zero buffer profile to the IDs defined by ids_to_reclaim or all IDs on the port.
+ * 4. Handle ingress and egress buffer profile list, which shared the common logic:
+ *    - Construct the zero buffer profile list from the normal buffer profile list.
+ *    - Apply the zero buffer profile list on the port.
+ */
 task_process_status BufferMgrDynamic::applyZeroProfilesOnPort(port_info_t &portInfo, const string &portName)
 {
     // No action as no zero profiles defined.
@@ -1130,6 +1215,17 @@ task_process_status BufferMgrDynamic::applyZeroProfilesOnPort(port_info_t &portI
     return task_process_status::task_success;
 }
 
+/*
+ * removeZeroProfilesOnPort
+ * Remove the zero profiles and zero profile lists from the port.
+ * Called when a port is started up.
+ *
+ * Arguments:
+ *  portInfo, represents the port information of the port
+ *  portName, represents the name of the port
+ * Return:
+ *  None.
+ */
 void BufferMgrDynamic::removeZeroProfilesOnPort(port_info_t &portInfo, const string &portName)
 {
     if (!m_ingressPgZeroProfileName.empty())
@@ -1149,6 +1245,17 @@ void BufferMgrDynamic::removeZeroProfilesOnPort(port_info_t &portInfo, const str
     }
 }
 
+/*
+ * applyNormalBufferObjectsOnPort
+ * Apply normal buffer profiles on buffer queues, and buffer profile lists.
+ * The buffer priority group will be handled by refreshPgsForPort
+ * Called when a port is started up.
+ *
+ * Arguments:
+ *  port, represents the name of the port
+ * Return:
+ *  None.
+ */
 void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
 {
     vector<FieldValueTuple> fvVector;
@@ -1180,6 +1287,17 @@ void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
     }
 }
 
+// removeAllBufferObjectsFromPort
+// Called when a port is admin down
+// Parameters:
+//  - port: the name of the port
+// Return:
+//  - task_process_status
+//
+// Flow:
+// 1. Remove all the priority groups of the port from APPL_DB
+// 2. Remove all the buffer profiles that are dynamically calculated and no longer referenced
+// 3. Remove all the queues of the port from APPL_DB
 task_process_status BufferMgrDynamic::removeAllBufferObjectsFromPort(const string &port)
 {
     buffer_pg_lookup_t &portPgs = m_portPgLookup[port];
@@ -1632,6 +1750,23 @@ task_process_status BufferMgrDynamic::doUpdateBufferProfileForSize(buffer_profil
     return task_process_status::task_success;
 }
 
+/*
+ * handleBufferMaxParam, handles the BUFFER_MAX_PARAMETER table which contains some thresholds related to buffer.
+ * The available fields depend on the key of the item:
+ * 1. "global", available keys:
+ *    - mmu_size, represents the maximum buffer size of the chip
+ * 2. "<port name>", available keys:
+ *    - max_priority_groups, represents the maximum number of priority groups of the port.
+ *      It is pushed into STATE_DB by ports orchagent when it starts and will be used to generate the default priority groups to reclaim.
+ *      When reserved buffer is reclaimed for a port, and no priority group IDs specified in the "ids_to_reclaim" in json file,
+ *      the default priority groups will be used to apply zero buffer profiles on all priority groups.
+ *    - max_queues, represents the maximum number of queues of the port.
+ *      It is used in the same way as max_priority_groups.
+ *    - max_headroom_size, represents the maximum headroom size of the port.
+ *      It is used for checking whether the accumulative headroom of the port exceeds the port's threshold
+ *      before applying a new priority group on a port or changing an existing buffer profile.
+ *      It is referenced by lua plugin "check headroom size" only and will not be handled in this function.
+ */
 task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTuple &tuple)
 {
     string &op = kfvOp(tuple);
@@ -2655,6 +2790,42 @@ task_process_status BufferMgrDynamic::handleSingleBufferPortEgressProfileListEnt
     return handleSingleBufferPortProfileListEntry(key, false, tuple);
 }
 
+/*
+ * handleBufferObjectTables
+ *
+ * Arguments:
+ *  tuple, the KeyOpFieldsValuesTuple, containing key, op, list of tuples consisting of field and value pair
+ *  table, the name of the table
+ *  keyWithIds, whether the keys contains sublevel IDs of objects.
+ *   - For queue and priority groups, it is true since the keys format is like <TABLE_NAME>|<port>|IDs
+ *   - For profile list tables, it is false since the keys format is <TABLE_NAME>|<port>
+ *
+ * For the buffer object tables, like BUFFER_PG, BUFFER_QUEUE, BUFFER_PORT_INGRESS_PROFILE_LIST, and BUFFER_PORT_EGRESS_PROFILE_LIST,
+ * their keys can be either a single port or a port list separated by a comma, which can be handled by a common logic.
+ * So the logic to parse the keys is common and the logic to handle each table is different.
+ * This function is introduced to handle the common logic and a handler map (buffer_single_item_handler_map) is introduced
+ * to dispatch to different handler according to the table name.
+ *
+ * It is wrapped by the following functions which are the table handler of the above tables:
+ *  - handleBufferPgTable
+ *  - handleBufferQueueTable
+ *  - handleBufferPortIngressProfileListTable
+ *  - handleBufferPortEgressProfileListTable
+ * and will call the following table handlers which handles table update for a single port:
+ *  - handleSingleBufferPgEntry
+ *  - handleSingleBufferQueueEntry
+ *  - handleSingleBufferPortIngressProfileListEntry
+ *  - handleSingleBufferPortEgressProfileListEntry
+ *
+ * The flow:
+ * 1. Parse the key.
+ * 2. Fetch the handler according to the table name
+ * 3. For each port in the key list,
+ *    - Construct a new key as
+ *      - A single port + IDs if keyWidthIds is true
+ *      - Or a single port only if keyWidthIds is false
+ *    - Call the corresponding handler.
+ */
 task_process_status BufferMgrDynamic::handleBufferObjectTables(KeyOpFieldsValuesTuple &tuple, const string &table, bool keyWithIds)
 {
     SWSS_LOG_ENTER();
@@ -2764,6 +2935,34 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
     }
 }
 
+/*
+ * We do not apply any buffer profiles and objects until the buffer pools are ready.
+ * This is to prevent buffer orchagent from keeping retrying if buffer profiles and objects are inserted to APPL_DB while buffer pools are not.
+ *
+ * Originally, all buffer profiles and objects were applied to APPL_DB as soon as they were learnt from CONFIG_DB.
+ * The buffer profiles, and objects will be available as soon as they are received from CONFIG_DB when the system is starting
+ * but it takes more seconds for the buffer pools to be applied to APPL_DB
+ * because the sizes need to be calculated first and can be calculated only after some other data available.
+ * This causes buffer orchagent receives buffer profiles and objects first and then buffer pools.
+ * The buffer orchagent has to keep retrying in such case, which wastes time and incurs error messages.
+ *
+ * Now, we will guarantee the buffer profiles and objects to be applied only after buffer pools are ready.
+ * This is achieved by the following steps:
+ *  - m_bufferPoolReady indicates whether the buffer pools are ready.
+ *  - When the buffer profiles and objects are received from CONFIG_DB,
+ *    they will be handled and stored in internal data struct
+ *    (but not applied to APPL_DB until the buffer pools are ready, AKA. m_bufferPoolReady == true)
+ *  - Once buffer pools are ready, all stored buffer profiles and objects will be applied to APPL_DB by this function.
+ *
+ * The progress of pushing buffer pools into APPL_DB has also been accelerated by the lua plugin for calculating buffer sizes.
+ * Originally, if the data are not available for calculating buffer sizes, it just return an empty vectors and buffer manager will retry
+ * Now, the lua plugin will return the sizes calculated by the following logic:
+ *  - If there are buffer sizes in APPL_DB, return the sizes in APPL_DB.
+ *  - Otherwise, return all 0 as sizes.
+ * This makes sure there will be available sizes of buffer pools as sonn as possible when the system is starting
+ * The sizes will be updated to non zero when the data for calculating it are ready.
+ * Even this is Mellanox specific, other vendors can also take advantage of this logic.
+ */
 void BufferMgrDynamic::handlePendingBufferObjects()
 {
     if (m_bufferPoolReady)
