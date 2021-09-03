@@ -3022,14 +3022,23 @@ void BufferMgrDynamic::handlePendingBufferObjects()
 
         if (!m_pendingApplyZeroProfilePorts.empty())
         {
+            set<string> portsNeedRetry;
+            task_process_status status;
             for ( auto &port : m_pendingApplyZeroProfilePorts)
             {
                 removeAllBufferObjectsFromPort(port);
-                applyZeroProfilesOnPort(m_portInfoLookup[port], port);
-
-                SWSS_LOG_NOTICE("Admin-down port %s is handled because buffer pools are configured", port.c_str());
+                status = applyZeroProfilesOnPort(m_portInfoLookup[port], port);
+                if (status == task_process_status::task_success)
+                {
+                    SWSS_LOG_NOTICE("Admin-down port %s is handled after buffer pools have been configured", port.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Admin-down port %s is still failing after  buffer pools have been configured, need retry", port.c_str());
+                    portsNeedRetry.insert(port);
+                }
             }
-            m_pendingApplyZeroProfilePorts.clear();
+            m_pendingApplyZeroProfilePorts = move(portsNeedRetry);
         }
     }
 }
