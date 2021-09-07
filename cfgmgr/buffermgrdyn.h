@@ -167,6 +167,7 @@ private:
     std::set<std::string> m_zeroPoolNameSet;
     std::vector<std::pair<std::string, std::string>> m_zeroProfiles;
     bool m_zeroProfilesLoaded;
+    bool m_supportRemoving;
     std::string m_ingressPgZeroProfileName;
     std::string m_egressQueueZeroProfileName;
     std::string m_pgIdsToZero;
@@ -270,7 +271,7 @@ private:
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
     void updateBufferProfileToDb(const std::string &name, const buffer_profile_t &profile);
-    void updateBufferObjectToDb(const std::string &key, const std::string &profile, bool add, bool isPg);
+    void updateBufferObjectToDb(const std::string &key, const std::string &profile, bool add, bool isPg, bool isReference);
     void updateBufferObjectListToDb(const std::string &key, const std::string &profileList, bool ingress);
 
     // Meta flows
@@ -284,13 +285,12 @@ private:
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
     task_process_status checkBufferProfileDirection(const std::string &profiles, bool expectIngress);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
-    task_process_status applyZeroProfilesOnPort(port_info_t &portInfo, const std::string &port);
     void removeZeroProfilesOnPort(port_info_t &portInfo, const std::string &port);
     void applyNormalBufferObjectsOnPort(const std::string &port);
     void handlePendingBufferObjects();
 
     // Main flows
-    task_process_status removeAllBufferObjectsFromPort(const std::string &port);
+    task_process_status reclaimReservedBufferForPort(const std::string &port);
     task_process_status refreshPgsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
     task_process_status doUpdatePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doRemovePgTask(const std::string &pg_key, const std::string &port);
