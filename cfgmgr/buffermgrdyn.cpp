@@ -1160,23 +1160,24 @@ string BufferMgrDynamic::constructZeroProfileListFromNormalProfileList(const str
  */
 void BufferMgrDynamic::removeZeroProfilesOnPort(port_info_t &portInfo, const string &portName)
 {
-#if 0
-    if (!m_ingressPgZeroProfileName.empty())
+    auto const &portPrefix = portName + delimiter;
+
+    if (!portInfo.extra_pgs.empty())
     {
-        if (!m_pgIdsToZero.empty())
-            m_applBufferPgTable.del(portName + delimiter + m_pgIdsToZero);
-        else if (!portInfo.maximum_pgs.empty())
-            m_applBufferPgTable.del(portName + delimiter + portInfo.maximum_pgs);
+        for (auto &it: portInfo.extra_pgs)
+        {
+            m_applBufferPgTable.del(portPrefix + it);
+        }
+        portInfo.extra_pgs.clear();
     }
 
-    if (!m_egressQueueZeroProfileName.empty())
+    if (!portInfo.extra_queues.empty())
     {
-        if (!m_queueIdsToZero.empty())
-            m_applBufferQueueTable.del(portName + delimiter + m_queueIdsToZero);
-        else if (!portInfo.maximum_queues.empty())
-            m_applBufferQueueTable.del(portName + delimiter + portInfo.maximum_queues);
+        for (auto &it: portInfo.extra_queues)
+        {
+            m_applBufferQueueTable.del(portPrefix + it);
+        }
     }
-#endif
 }
 
 /*
@@ -1216,6 +1217,62 @@ void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
         m_applBufferEgressProfileListTable.set(port, fvVector);
         fvVector.clear();
     }
+}
+
+void BufferMgrDynamic::updateReclaimedItemsToMap(const string &key, long &idsMap)
+{
+    auto const &itemsMap = parseObjectNameFromKey(key, 1);
+    sai_uint32_t lowerBound, upperBound;
+    parseIndexRange(itemsMap, lowerBound, upperBound);
+    for (sai_uint32_t id = lowerBound; id <= upperBound; id ++)
+    {
+        idsMap ^= (1 << id);
+    }
+}
+
+vector<string> BufferMgrDynamic::generateSupportedButNotConfiguredItemsMap(long idsMap, sai_uint32_t maxId)
+{
+    long currentIdMask = 1;
+    bool started = false, needGenerateMap = false;
+    sai_uint32_t lower, upper;
+    vector<string> extraIdsToReclaim;
+    for (sai_uint32_t id = 0; id <= maxId; id ++)
+    {
+        if (idsMap & currentIdMask)
+        {
+            if (!started)
+            {
+                started = true;
+                lower = id;
+            }
+        }
+        else
+        {
+            if (started)
+            {
+                started = false;
+                upper = id - 1;
+                needGenerateMap = true;
+            }
+        }
+
+        if (needGenerateMap)
+        {
+            if (lower != upper)
+            {
+                extraIdsToReclaim.emplace_back(to_string(lower) + "-" + to_string(upper));
+            }
+            else
+            {
+                extraIdsToReclaim.emplace_back(to_string(lower));
+            }
+            needGenerateMap = false;
+        }
+
+        currentIdMask <<= 1;
+    }
+
+    return extraIdsToReclaim;
 }
 
 /*
@@ -1269,8 +1326,8 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     bool applyZeroProfileOnSpecifiedPgs = !m_pgIdsToZero.empty();
     bool applyZeroProfileOnSpecifiedQueues = !m_queueIdsToZero.empty();
 
-    if ((!applyZeroProfileOnSpecifiedPgs && portInfo.pgs_to_reclaim.empty())
-        || (!applyZeroProfileOnSpecifiedQueues && portInfo.queues_to_reclaim.empty()))
+    if ((!applyZeroProfileOnSpecifiedPgs && 0 == portInfo.maximum_pgs)
+        || (!applyZeroProfileOnSpecifiedQueues && 0 == portInfo.maximum_queues))
     {
         SWSS_LOG_NOTICE("Maximum supported priority groups and queues have not learned for port %s, reclaiming reserved buffer postponed", port.c_str());
         return task_process_status::task_need_retry;
@@ -1278,6 +1335,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
 
     SWSS_LOG_NOTICE("Reclaiming buffer reserved for all PGs from port %s", port.c_str());
 
+    portInfo.pgs_map = (1 << portInfo.maximum_pgs) - 1;
     for (auto &it : portPgs)
     {
         auto &key = it.first;
@@ -1286,11 +1344,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
 
         SWSS_LOG_INFO("Reclaiming buffer reserved for PG %s from port %s", key.c_str(), port.c_str());
 
-        if (portPg.running_profile_name.empty())
-            continue;
-
         profileInfo.port_pgs.erase(key);
-        profilesToBeReleased.insert(portPg.running_profile_name);
         if (!applyZeroProfileOnSpecifiedPgs)
         {
             // Apply zero profiles on each PG separatedly
@@ -1305,8 +1359,11 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
             {
                 // No zero profile defined for the pool. Reclaim buffer by removing the PG
                 SWSS_LOG_INFO("Zero profile is not defined for pool %s, reclaim reserved buffer by removing PG %s of port %s", profileInfo.pool_name.c_str(), key.c_str(), port.c_str());
-                updateBufferObjectToDb(key, poolInfo.zero_profile_name, false);
+                if (!portPg.running_profile_name.empty())
+                    updateBufferObjectToDb(key, poolInfo.zero_profile_name, false);
             }
+
+            updateReclaimedItemsToMap(key, portInfo.pgs_map);
         }
         else
         {
@@ -1314,15 +1371,29 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
             // Remove each PG first
             // In this case, removing must be supported (checked when the json was loaded)
             SWSS_LOG_INFO("Zero profile will be applied on %s. Remove PG %s of port %s first", m_pgIdsToZero.c_str(), key.c_str(), port.c_str());
-            updateBufferObjectToDb(key, portPg.running_profile_name, false);
+            if (!portPg.running_profile_name.empty())
+                updateBufferObjectToDb(key, portPg.running_profile_name, false);
         }
 
-        portPg.running_profile_name.clear();
+        if (!portPg.running_profile_name.empty())
+        {
+            profilesToBeReleased.insert(portPg.running_profile_name);
+            portPg.running_profile_name.clear();
+        }
     }
 
     if (applyZeroProfileOnSpecifiedPgs)
     {
         updateBufferObjectToDb(portKeyPrefix + m_pgIdsToZero, m_ingressPgZeroProfileName, true, true, true);
+    }
+    else
+    {
+        // Apply zero profiles on supported-but-not-configured PGs
+        portInfo.extra_pgs = generateSupportedButNotConfiguredItemsMap(portInfo.pgs_map, portInfo.maximum_pgs);
+        for(auto &it: portInfo.extra_pgs)
+        {
+            updateBufferObjectToDb(portKeyPrefix + it, m_ingressPgZeroProfileName, true, true, true);
+        }
     }
 
     // Remove the old profile which is probably not referenced anymore.
@@ -1336,6 +1407,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
 
     SWSS_LOG_NOTICE("Reclaiming buffer reserved for all queues from port %s", port.c_str());
 
+    portInfo.queues_map = (1 << portInfo.maximum_queues) - 1;
     auto &portQueues = m_portQueueLookup[port];
     for (auto &it : portQueues)
     {
@@ -1360,6 +1432,8 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
                 SWSS_LOG_INFO("Zero profile is not defined for pool %s, reclaim reserved buffer by removing queue %s of port %s", profileInfo.pool_name.c_str(), it.first.c_str(), port.c_str());
                 updateBufferObjectToDb(it.first, poolInfo.zero_profile_name, false, false);
             }
+
+            updateReclaimedItemsToMap(it.first, portInfo.queues_map);
         }
         else
         {
@@ -1375,6 +1449,14 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     if (applyZeroProfileOnSpecifiedQueues)
     {
         updateBufferObjectToDb(portKeyPrefix + m_queueIdsToZero, m_egressQueueZeroProfileName, true, false, true);
+    }
+    else
+    {
+        portInfo.extra_queues = generateSupportedButNotConfiguredItemsMap(portInfo.queues_map, portInfo.maximum_queues);
+        for(auto &it: portInfo.extra_queues)
+        {
+            updateBufferObjectToDb(portKeyPrefix + it, m_egressQueueZeroProfileName, true, false, true);
+        }
     }
 
     vector<FieldValueTuple> fvVector;
@@ -1860,10 +1942,7 @@ task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTupl
 
                     SWSS_LOG_INFO("BUFFER_MAX_PARAM: Got port %s's max priority group %s", key.c_str(), value.c_str());
 
-                    if (pgCount > 1)
-                        portInfo.pgs_to_reclaim = "0-" + to_string(pgCount - 1);
-                    else
-                        portInfo.pgs_to_reclaim = "0";
+                    portInfo.maximum_pgs = (sai_uint32_t)pgCount;
                 }
                 else if (fvField(i) == "max_queues")
                 {
@@ -1876,10 +1955,7 @@ task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTupl
 
                     SWSS_LOG_INFO("BUFFER_MAX_PARAM: Got port %s's max queue %s", key.c_str(), value.c_str());
 
-                    if (queueCount > 1)
-                        portInfo.queues_to_reclaim = "0-" + to_string(queueCount - 1);
-                    else
-                        portInfo.queues_to_reclaim = "0";
+                    portInfo.maximum_queues = (sai_uint32_t)queueCount;
                 }
             }
         }
@@ -2268,7 +2344,6 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
             else
             {
                 reclaimReservedBufferForPort(port);
-                //applyZeroProfilesOnPort(portInfo, port);
                 checkSharedBufferPoolSize();
             }
 
@@ -2278,7 +2353,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         {
             if (was_admin_down)
             {
-                //removeZeroProfilesOnPort(portInfo, port);
+                removeZeroProfilesOnPort(portInfo, port);
                 applyNormalBufferObjectsOnPort(port);
                 m_adminDownPorts.erase(port);
                 m_pendingApplyZeroProfilePorts.erase(port);
