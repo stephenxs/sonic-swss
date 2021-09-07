@@ -154,15 +154,33 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
     string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + LOSSLESS_PGS;
     // key format is pg_lossless_<speed>_<cable>_profile
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
-    // check if profile already exists - if yes - skip creation
-    m_cfgBufferProfileTable.get(buffer_profile_key, fvVector);
+    string profile_ref = string("[") +
+                         CFG_BUFFER_PROFILE_TABLE_NAME +
+                         m_cfgBufferPgTable.getTableNameSeparator() +
+                         buffer_profile_key +
+                         "]";
+
     if (!admin_up && m_platform == "mellanox")
     {
         // Remove the entry in BUFFER_PG table if any
+        m_cfgBufferPgTable.get(buffer_pg_key, fvVector);
         if (!fvVector.empty())
         {
-            SWSS_LOG_NOTICE("Removing PG %s from port %s which is administrative down", buffer_pg_key.c_str(), port.c_str());
-            m_cfgBufferPgTable.del(buffer_pg_key);
+            for (auto &prop : fvVector)
+            {
+                if (fvField(prop) == "profile")
+                {
+                    if (fvValue(prop) == profile_ref)
+                    {
+                        SWSS_LOG_NOTICE("Removing PG %s from port %s which is administrative down", buffer_pg_key.c_str(), port.c_str());
+                        m_cfgBufferPgTable.del(buffer_pg_key);
+                    }
+                    else
+                    {
+                        SWSS_LOG_NOTICE("None default profile %s is configured on PG %s, won't reclaim buffer", fvValue(prop).c_str(), buffer_pg_key.c_str());
+                    }
+                }
+            }
         }
 
         return task_process_status::task_success;
@@ -175,6 +193,8 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
         return task_process_status::task_invalid_entry;
     }
 
+    // check if profile already exists - if yes - skip creation
+    m_cfgBufferProfileTable.get(buffer_profile_key, fvVector);
     // Crete record in BUFFER_PROFILE table
     if (fvVector.size() == 0)
     {
@@ -211,12 +231,6 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
     }
 
     fvVector.clear();
-
-    string profile_ref = string("[") +
-                         CFG_BUFFER_PROFILE_TABLE_NAME +
-                         m_cfgBufferPgTable.getTableNameSeparator() +
-                         buffer_profile_key +
-                         "]";
 
     /* Check if PG Mapping is already then log message and return. */
     m_cfgBufferPgTable.get(buffer_pg_key, fvVector);
