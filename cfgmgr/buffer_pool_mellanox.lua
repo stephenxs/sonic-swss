@@ -191,7 +191,12 @@ local egress_lossless_pool_size = redis.call('HGET', 'BUFFER_POOL|egress_lossles
 
 -- Whether shared headroom pool is enabled?
 local default_lossless_param_keys = redis.call('KEYS', 'DEFAULT_LOSSLESS_BUFFER_PARAMETER*')
-local over_subscribe_ratio = tonumber(redis.call('HGET', default_lossless_param_keys[1], 'over_subscribe_ratio'))
+local over_subscribe_ratio
+if #default_lossless_param_keys > 0 then
+    over_subscribe_ratio = tonumber(redis.call('HGET', default_lossless_param_keys[1], 'over_subscribe_ratio'))
+else
+    over_subscribe_ratio = 0
+end
 
 -- Fetch the shared headroom pool size
 local shp_size = tonumber(redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff'))
