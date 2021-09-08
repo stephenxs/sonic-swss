@@ -198,7 +198,7 @@ void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple
  *    the zero profile name will be stored in the referenced pool's "zero_profile_name" field for the purpose of
  *    constructing the zero profile list or providing the zero profiles for PGs or queues.
  *
- *  - ids_to_reclaim: represents the ids required for reclaiming unused buffers, including:
+ *  - control_fields: represents the ids required for reclaiming unused buffers, including:
  *     - pgs_to_apply_zero_profile, represents the PGs on which the zero profiles will be applied for reclaiming unused buffers
  *       If it is not provided, zero profiles will be applied on all PGs.
  *     - queues_to_apply_zero_profile, represents the queues on which the zero profiles will be applied
@@ -214,7 +214,7 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
     {
         auto &table_key = kfvKey(kfv);
 
-        if (table_key == "ids_to_reclaim")
+        if (table_key == "control_fields")
         {
             auto &fvs = kfvFieldsValues(kfv);
             for (auto &fv : fvs)
@@ -253,7 +253,8 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
         if (table == APP_BUFFER_POOL_TABLE_NAME)
         {
             m_applBufferPoolTable.set(key, kfvFieldsValues(kfv));
-            SWSS_LOG_INFO("Loaded zero pool %s to APPL_DB", key.c_str());
+            m_stateBufferPoolTable.set(key, kfvFieldsValues(kfv));
+            SWSS_LOG_NOTICE("Loaded zero buffer pool %s", key.c_str());
             m_zeroPoolNameSet.insert(key);
         }
         else if (table == APP_BUFFER_PROFILE_TABLE_NAME)
@@ -309,7 +310,8 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                 continue;
             }
             m_applBufferProfileTable.set(key, fvs);
-            SWSS_LOG_INFO("Loaded zero profile %s to APPL_DB", key.c_str());
+            m_stateBufferProfileTable.set(key, fvs);
+            SWSS_LOG_NOTICE("Loaded zero buffer profile %s", key.c_str());
         }
         else
         {
@@ -338,7 +340,7 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
 
         if (!m_pgIdsToZero.empty() || !m_queueIdsToZero.empty())
         {
-            SWSS_LOG_ERROR("Unified IGs of queues or priority groups specified while removing buffer items is not supported, reserved buffer can not be reclaimed correctly");
+            SWSS_LOG_ERROR("Unified IDs of queues or priority groups specified while removing buffer items is not supported, reserved buffer can not be reclaimed correctly");
             noReclaiming = true;
         }
     }
@@ -368,7 +370,8 @@ void BufferMgrDynamic::unloadZeroPoolAndProfiles()
             poolObj.zero_profile_name.clear();
         }
         m_applBufferProfileTable.del(zeroProfileName);
-        SWSS_LOG_INFO("Unloaded zero profile %s from APPL_DB", zeroProfileName.c_str());
+        m_stateBufferProfileTable.del(zeroProfileName);
+        SWSS_LOG_NOTICE("Unloaded zero buffer profile %s", zeroProfileName.c_str());
     }
 
     m_zeroProfiles.clear();
@@ -376,7 +379,8 @@ void BufferMgrDynamic::unloadZeroPoolAndProfiles()
     for (auto &zeroPool : m_zeroPoolNameSet)
     {
         m_applBufferPoolTable.del(zeroPool);
-        SWSS_LOG_INFO("Unloaded zero pool %s to APPL_DB", zeroPool.c_str());
+        m_stateBufferPoolTable.del(zeroPool);
+        SWSS_LOG_NOTICE("Unloaded zero buffer pool %s", zeroPool.c_str());
     }
 
     m_zeroPoolNameSet.clear();
@@ -1902,7 +1906,7 @@ task_process_status BufferMgrDynamic::doUpdateBufferProfileForSize(buffer_profil
  * 2. "<port name>", available keys:
  *    - max_priority_groups, represents the maximum number of priority groups of the port.
  *      It is pushed into STATE_DB by ports orchagent when it starts and will be used to generate the default priority groups to reclaim.
- *      When reserved buffer is reclaimed for a port, and no priority group IDs specified in the "ids_to_reclaim" in json file,
+ *      When reserved buffer is reclaimed for a port, and no priority group IDs specified in the "control_fields" in json file,
  *      the default priority groups will be used to apply zero buffer profiles on all priority groups.
  *    - max_queues, represents the maximum number of queues of the port.
  *      It is used in the same way as max_priority_groups.
