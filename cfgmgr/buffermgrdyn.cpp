@@ -2693,7 +2693,6 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
     SWSS_LOG_DEBUG("Processing command:%s table BUFFER_PG key %s", op.c_str(), key.c_str());
     if (op == SET_COMMAND)
     {
-        bool ignored = false;
         bool pureDynamic = true;
         // For set command:
         // 1. Create the corresponding table entries in APPL_DB
@@ -2763,7 +2762,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
             bufferPg.lossless = true;
         }
 
-        if (!ignored && bufferPg.lossless)
+        if (bufferPg.lossless)
         {
             doUpdatePgTask(key, port);
         }
