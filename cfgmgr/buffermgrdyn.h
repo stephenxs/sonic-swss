@@ -103,11 +103,9 @@ typedef struct {
 
     long lane_count;
     sai_uint32_t maximum_queues;
-    long queues_map;
-    std::vector<std::string> extra_queues;
+    std::vector<std::string> supported_but_not_configured_queues;
     sai_uint32_t maximum_pgs;
-    long pgs_map;
-    std::vector<std::string> extra_pgs;
+    std::vector<std::string> supported_but_not_configured_pgs;
 } port_info_t;
 
 //TODO:
@@ -271,8 +269,8 @@ private:
         return !value.empty() && value != "0";
     }
     std::string getMaxSpeedFromList(std::string speedList);
-    std::vector<std::string> generateSupportedButNotConfiguredItemsMap(long idsMap, sai_uint32_t maxId);
-    void updateReclaimedItemsToMap(const std::string &key, long &idsMap);
+    std::vector<std::string> generateSupportedButNotConfiguredItemsMap(unsigned long idsMap, sai_uint32_t maxId);
+    void clearIdsFromMap(const std::string &key, unsigned long &idsMap);
 
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);

@@ -1165,7 +1165,8 @@ string BufferMgrDynamic::constructZeroProfileListFromNormalProfileList(const str
 
 /*
  * removeZeroProfilesOnPort
- * Remove the zero profiles and zero profile lists from the port.
+ * Remove the supported-but-not-configured buffer items from the port.
+ * They were applied when the port was shut down.
  * Called when a port is started up.
  *
  * Arguments:
@@ -1178,18 +1179,18 @@ void BufferMgrDynamic::removeZeroProfilesOnPort(port_info_t &portInfo, const str
 {
     auto const &portPrefix = portName + delimiter;
 
-    if (!portInfo.extra_pgs.empty())
+    if (!portInfo.supported_but_not_configured_pgs.empty())
     {
-        for (auto &it: portInfo.extra_pgs)
+        for (auto &it: portInfo.supported_but_not_configured_pgs)
         {
             m_applBufferPgTable.del(portPrefix + it);
         }
-        portInfo.extra_pgs.clear();
+        portInfo.supported_but_not_configured_pgs.clear();
     }
 
-    if (!portInfo.extra_queues.empty())
+    if (!portInfo.supported_but_not_configured_queues.empty())
     {
-        for (auto &it: portInfo.extra_queues)
+        for (auto &it: portInfo.supported_but_not_configured_queues)
         {
             m_applBufferQueueTable.del(portPrefix + it);
         }
@@ -1235,7 +1236,22 @@ void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
     }
 }
 
-void BufferMgrDynamic::updateReclaimedItemsToMap(const string &key, long &idsMap)
+/*
+ * clearIdsFromMap
+ *
+ * Clear the IDs represented by key from idsMap
+ * Args:
+ *      key: The key of BUFFER_QUEUE or BUFFER_PG, like Ethernet0|3-4
+ *      idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ * Return:
+ *      None
+ *
+ * Example:
+ *      Input idsMap: 00111110b, key: Ethernet0|3-4
+ *      The bits 3-4 will be cleared
+ *      Output idsMap: 00100110b
+ */
+void BufferMgrDynamic::clearIdsFromMap(const string &key, unsigned long &idsMap)
 {
     auto const &itemsMap = parseObjectNameFromKey(key, 1);
     sai_uint32_t lowerBound, upperBound;
@@ -1246,7 +1262,21 @@ void BufferMgrDynamic::updateReclaimedItemsToMap(const string &key, long &idsMap
     }
 }
 
-vector<string> BufferMgrDynamic::generateSupportedButNotConfiguredItemsMap(long idsMap, sai_uint32_t maxId)
+/*
+ * generateSupportedButNotConfiguredItemsMap
+ *
+ * Parse the idsMap and generate a vector which contains slices representing bits in idsMap
+ * Args:
+ *     idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ *     maxId: The maximum value of ID.
+ * Return:
+ *     A vector which contains slices representing bits in idsMap
+ *
+ * Example:
+ *     Input idsMap: 00100110b, maxId: 8
+ *     Return vector: ["1-2", "5"]
+ */
+vector<string> BufferMgrDynamic::generateSupportedButNotConfiguredItemsMap(unsigned long idsMap, sai_uint32_t maxId)
 {
     long currentIdMask = 1;
     bool started = false, needGenerateMap = false;
@@ -1254,6 +1284,7 @@ vector<string> BufferMgrDynamic::generateSupportedButNotConfiguredItemsMap(long 
     vector<string> extraIdsToReclaim;
     for (sai_uint32_t id = 0; id <= maxId; id ++)
     {
+        // currentIdMask represents the bit mask corresponding to id: (1<<id)
         if (idsMap & currentIdMask)
         {
             if (!started)
@@ -1302,14 +1333,15 @@ vector<string> BufferMgrDynamic::generateSupportedButNotConfiguredItemsMap(long 
  *  - task_process_status
  *
  * Flow:
- * 1. Remove all the priority groups of the port from APPL_DB
+ * 1. Reclaim all the priority groups of the port from APPL_DB
  * 2. Remove all the buffer profiles that are dynamically calculated and no longer referenced
- * 3. Remove all the queues of the port from APPL_DB
+ * 3. Reclaim all the queues of the port from APPL_DB
+ * 4. Reclaim the ingress/egress profile list of the port form APPL_DB
  *
  * The flow:
  * 1. Load the zero pools and profiles into APPL_DB if they have been provided but not loaded.
- * 2. Skip the whole function if maximum numbers of priority groups or queues have not been learnt.
- *    In this case, the reclaiming will be postponed.
+ * 2. Skip the whole function if maximum numbers of priority groups or queues have not been populated to STATE_DB.
+ *    In this case, the reclaiming will be deferred.
  * 3. Handle priority group, and queues:
  *    Two modes for them to be reclaimed:
  *    - Apply zero buffer profiles on all configured and supported-but-not-configured items.
@@ -1318,7 +1350,7 @@ vector<string> BufferMgrDynamic::generateSupportedButNotConfiguredItemsMap(long 
  *      - Zero profiles will be applied on
  *        - 0-2, 5-6, 7-15: egress_lossy_zero_profile
  *        - 3-4: egress_lossless_zero_profile
- *    - Apply zero buffer profiles on items specific by vendor and remove all other items.
+ *    - Apply zero buffer profiles on items specified by vendor and remove all other items.
  *      Eg.
  *      - 8 PGs supported, 0 is configured as lossy and 3-4 are configured as lossless
  *      - PGs to be applied zero profile on is 0, 3-4 will be removed
@@ -1345,13 +1377,13 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     if ((!applyZeroProfileOnSpecifiedPgs && 0 == portInfo.maximum_pgs)
         || (!applyZeroProfileOnSpecifiedQueues && 0 == portInfo.maximum_queues))
     {
-        SWSS_LOG_NOTICE("Maximum supported priority groups and queues have not learned for port %s, reclaiming reserved buffer postponed", port.c_str());
+        SWSS_LOG_NOTICE("Maximum supported priority groups and queues have not been populated in STATE_DB for port %s, reclaiming reserved buffer deferred", port.c_str());
         return task_process_status::task_need_retry;
     }
 
     SWSS_LOG_NOTICE("Reclaiming buffer reserved for all PGs from port %s", port.c_str());
 
-    portInfo.pgs_map = (1 << portInfo.maximum_pgs) - 1;
+    unsigned long pgs_map = (1 << portInfo.maximum_pgs) - 1;
     for (auto &it : portPgs)
     {
         auto &key = it.first;
@@ -1363,7 +1395,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
         profileInfo.port_pgs.erase(key);
         if (!applyZeroProfileOnSpecifiedPgs)
         {
-            // Apply zero profiles on each PG separatedly
+            // Apply zero profiles on each configured PG and supported-but-not-configured PG
             // Fetch the zero profile of the pool referenced by the configured profile
             auto &poolInfo = m_bufferPoolLookup[profileInfo.pool_name];
             if (!poolInfo.zero_profile_name.empty())
@@ -1379,7 +1411,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
                     updateBufferObjectToDb(key, poolInfo.zero_profile_name, false);
             }
 
-            updateReclaimedItemsToMap(key, portInfo.pgs_map);
+            clearIdsFromMap(key, pgs_map);
         }
         else
         {
@@ -1405,8 +1437,8 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     else
     {
         // Apply zero profiles on supported-but-not-configured PGs
-        portInfo.extra_pgs = generateSupportedButNotConfiguredItemsMap(portInfo.pgs_map, portInfo.maximum_pgs);
-        for(auto &it: portInfo.extra_pgs)
+        portInfo.supported_but_not_configured_pgs = generateSupportedButNotConfiguredItemsMap(pgs_map, portInfo.maximum_pgs);
+        for(auto &it: portInfo.supported_but_not_configured_pgs)
         {
             updateBufferObjectToDb(portKeyPrefix + it, m_ingressPgZeroProfileName, true, true, true);
         }
@@ -1423,7 +1455,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
 
     SWSS_LOG_NOTICE("Reclaiming buffer reserved for all queues from port %s", port.c_str());
 
-    portInfo.queues_map = (1 << portInfo.maximum_queues) - 1;
+    unsigned long queues_map = (1 << portInfo.maximum_queues) - 1;
     auto &portQueues = m_portQueueLookup[port];
     for (auto &it : portQueues)
     {
@@ -1449,7 +1481,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
                 updateBufferObjectToDb(it.first, poolInfo.zero_profile_name, false, false);
             }
 
-            updateReclaimedItemsToMap(it.first, portInfo.queues_map);
+            clearIdsFromMap(it.first, queues_map);
         }
         else
         {
@@ -1468,8 +1500,8 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     }
     else
     {
-        portInfo.extra_queues = generateSupportedButNotConfiguredItemsMap(portInfo.queues_map, portInfo.maximum_queues);
-        for(auto &it: portInfo.extra_queues)
+        portInfo.supported_but_not_configured_queues = generateSupportedButNotConfiguredItemsMap(queues_map, portInfo.maximum_queues);
+        for(auto &it: portInfo.supported_but_not_configured_queues)
         {
             updateBufferObjectToDb(portKeyPrefix + it, m_egressQueueZeroProfileName, true, false, true);
         }
@@ -2354,13 +2386,23 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
 
             if (!m_bufferPoolReady)
             {
+                // Applying zero profiles requires all the buffer pools referenced by zero profiles to be ready.
+                // In case buffer pools haven't been ready yet, the procedure has to be deferred.
                 m_pendingApplyZeroProfilePorts.insert(port);
                 SWSS_LOG_NOTICE("Admin-down port %s is not handled for now because buffer pools are not configured yet", port.c_str());
             }
             else
             {
-                reclaimReservedBufferForPort(port);
-                checkSharedBufferPoolSize();
+                if (task_process_status::task_success == reclaimReservedBufferForPort(port))
+                {
+                    checkSharedBufferPoolSize();
+                }
+                else
+                {
+                    m_pendingApplyZeroProfilePorts.insert(port);
+                    SWSS_LOG_NOTICE("Admin-down port %s is not handled for now because maximum numbers of queues and PGs have not been populated into STATE_DB", port.c_str());
+                    // Return task_success as the port has been inserted into m_pendingApplyZeroProfilePorts
+                }
             }
 
             task_status = task_process_status::task_success;
@@ -2925,6 +2967,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPortProfileListEntry(con
     }
     else if (op == DEL_COMMAND)
     {
+        // Not supported on Mellanox platform for now.
         SWSS_LOG_INFO("Removing entry %s:%s from APPL_DB", tableName.c_str(), key.c_str());
         profileListLookup.erase(port);
         appTable.del(key);
