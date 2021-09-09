@@ -4013,7 +4013,10 @@ void PortsOrch::initializePortMaximumHeadroom(Port &port)
 void PortsOrch::initializePortBufferMaximumParameters(Port &port)
 {
     vector<FieldValueTuple> fvVector;
-    fvVector.emplace_back("max_headroom_size", to_string(port.m_maximum_headroom));
+    if (port.m_maximum_headroom > 0)
+    {
+        fvVector.emplace_back("max_headroom_size", to_string(port.m_maximum_headroom));
+    }
     fvVector.emplace_back("max_priority_groups", to_string(port.m_priority_group_ids.size()));
     fvVector.emplace_back("max_queues", to_string(port.m_queue_ids.size()));
 
