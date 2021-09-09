@@ -878,7 +878,7 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
 
 // Database operation
 // Set/remove BUFFER_PG or BUFFER_QUEUE table entry
-void BufferMgrDynamic::updateBufferObjectToDb(const string &key, const string &profile, bool add, bool isPg=true, bool isReference=false)
+void BufferMgrDynamic::updateBufferObjectToDb(const string &key, const string &profile, bool add, bool isPg=true)
 {
     auto &table = isPg ? m_applBufferPgTable : m_applBufferQueueTable;
     const auto &objType = isPg ? "priority group" : "queue";
@@ -893,21 +893,7 @@ void BufferMgrDynamic::updateBufferObjectToDb(const string &key, const string &p
         }
 
         vector<FieldValueTuple> fvVector;
-
-        if (isReference)
-        {
-            fvVector.emplace_back("profile", profile);
-        }
-        else
-        {
-            string profile_ref = string("[") +
-                APP_BUFFER_PROFILE_TABLE_NAME +
-                m_applBufferPgTable.getTableNameSeparator() +
-                profile +
-                "]";
-
-            fvVector.emplace_back("profile", profile_ref);
-        }
+        fvVector.emplace_back("profile", profile);
 
         table.set(key, fvVector);
     }
@@ -1216,7 +1202,7 @@ void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
     for (auto &queue : portQueues)
     {
         SWSS_LOG_NOTICE("Profile %s has been applied on queue %s", queue.second.c_str(), queue.first.c_str());
-        updateBufferObjectToDb(queue.first, queue.second, true, false, true);
+        updateBufferObjectToDb(queue.first, queue.second, true, false);
     }
 
     auto &ingressProfileList = m_portIngressProfileListLookup[port];
@@ -1401,7 +1387,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
             if (!poolInfo.zero_profile_name.empty())
             {
                 SWSS_LOG_INFO("Applying zero profile %s on PG %s of port %s", poolInfo.zero_profile_name.c_str(), key.c_str(), port.c_str());
-                updateBufferObjectToDb(key, poolInfo.zero_profile_name, true, true, true);
+                updateBufferObjectToDb(key, poolInfo.zero_profile_name, true, true);
             }
             else
             {
@@ -1432,7 +1418,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
 
     if (applyZeroProfileOnSpecifiedPgs)
     {
-        updateBufferObjectToDb(portKeyPrefix + m_pgIdsToZero, m_ingressPgZeroProfileName, true, true, true);
+        updateBufferObjectToDb(portKeyPrefix + m_pgIdsToZero, m_ingressPgZeroProfileName, true, true);
     }
     else
     {
@@ -1440,7 +1426,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
         portInfo.supported_but_not_configured_pgs = generateSupportedButNotConfiguredItemsMap(pgs_map, portInfo.maximum_pgs);
         for(auto &it: portInfo.supported_but_not_configured_pgs)
         {
-            updateBufferObjectToDb(portKeyPrefix + it, m_ingressPgZeroProfileName, true, true, true);
+            updateBufferObjectToDb(portKeyPrefix + it, m_ingressPgZeroProfileName, true, true);
         }
     }
 
@@ -1472,7 +1458,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
             if (!poolInfo.zero_profile_name.empty())
             {
                 SWSS_LOG_INFO("Applying zero profile %s on queue %s of port %s", poolInfo.zero_profile_name.c_str(), it.first.c_str(), port.c_str());
-                updateBufferObjectToDb(it.first, poolInfo.zero_profile_name, true, false, true);
+                updateBufferObjectToDb(it.first, poolInfo.zero_profile_name, true, false);
             }
             else
             {
@@ -1496,14 +1482,14 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     // Apply zero profiles on specified queues
     if (applyZeroProfileOnSpecifiedQueues)
     {
-        updateBufferObjectToDb(portKeyPrefix + m_queueIdsToZero, m_egressQueueZeroProfileName, true, false, true);
+        updateBufferObjectToDb(portKeyPrefix + m_queueIdsToZero, m_egressQueueZeroProfileName, true, false);
     }
     else
     {
         portInfo.supported_but_not_configured_queues = generateSupportedButNotConfiguredItemsMap(queues_map, portInfo.maximum_queues);
         for(auto &it: portInfo.supported_but_not_configured_queues)
         {
-            updateBufferObjectToDb(portKeyPrefix + it, m_egressQueueZeroProfileName, true, false, true);
+            updateBufferObjectToDb(portKeyPrefix + it, m_egressQueueZeroProfileName, true, false);
         }
     }
 
@@ -1648,7 +1634,8 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
         }
 
         // appl_db Database operation: set item BUFFER_PG|<port>|<pg>
-        updateBufferObjectToDb(key, newProfile, true);
+        auto const &newProfileReference = "[BUFFER_PROFILE_TABLE:" + newProfile + "]";
+        updateBufferObjectToDb(key, newProfileReference, true);
         isHeadroomUpdated = true;
     }
 
@@ -2786,7 +2773,8 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
             {
                 SWSS_LOG_NOTICE("Inserting BUFFER_PG table entry %s into APPL_DB directly", key.c_str());
                 bufferPg.running_profile_name = bufferPg.configured_profile_name;
-                updateBufferObjectToDb(key, bufferPg.running_profile_name, true);
+                auto const &reference = "[BUFFER_PROFILE_TABLE:" + bufferPg.running_profile_name + "]";
+                updateBufferObjectToDb(key, reference, true);
             }
             else if (!m_portInitDone)
             {
@@ -2912,7 +2900,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
         }
         else
         {
-            updateBufferObjectToDb(key, m_portQueueLookup[port][queues], true, false, true);
+            updateBufferObjectToDb(key, m_portQueueLookup[port][queues], true, false);
         }
     }
     else if (op == DEL_COMMAND)
@@ -3192,7 +3180,10 @@ void BufferMgrDynamic::handlePendingBufferObjects()
                     for (auto &pg : m_portPgLookup[port.first])
                     {
                         if (!pg.second.lossless)
-                            updateBufferObjectToDb(pg.first, pg.second.running_profile_name, true);
+                        {
+                            auto const &reference = "[BUFFER_PROFILE_TABLE:" + pg.second.running_profile_name + "]";
+                            updateBufferObjectToDb(pg.first, reference, true);
+                        }
                     }
                 }
             }
@@ -3202,7 +3193,7 @@ void BufferMgrDynamic::handlePendingBufferObjects()
             {
                 for (auto &queue : port.second)
                 {
-                    updateBufferObjectToDb(queue.first, queue.second, true, false, true);
+                    updateBufferObjectToDb(queue.first, queue.second, true, false);
                 }
             }
 

@@ -275,7 +275,7 @@ private:
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
     void updateBufferProfileToDb(const std::string &name, const buffer_profile_t &profile);
-    void updateBufferObjectToDb(const std::string &key, const std::string &profile, bool add, bool isPg, bool isReference);
+    void updateBufferObjectToDb(const std::string &key, const std::string &profile, bool add, bool isPg);
     void updateBufferObjectListToDb(const std::string &key, const std::string &profileList, bool ingress);
 
     // Meta flows
