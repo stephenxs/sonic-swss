@@ -187,7 +187,9 @@ void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple
  * Zero buffer pools and profiles are introduced for reclaiming reserved buffer on unused ports.
  *
  * They are loaded into buffer manager through a json file provided from CLI on a per-platform basis
- * and will be applied to APPL_DB on the ports once they are admin down.
+ * and will be applied to APPL_DB and STATE_DB on the ports once they are admin down.
+ * They are loaded into APPL_DB in an order in which they occur in the json file, which means
+ * it's vendor's responsibility to guarantee the order reflects the dependency among zero pools and profiles.
  * They are removed from APPL_DB once all ports are admin up.
  * The zero profiles are removed first and then the zero pools. This is to respect the dependency between them.
  *
@@ -196,15 +198,21 @@ void BufferMgrDynamic::parseGearboxInfo(shared_ptr<vector<KeyOpFieldsValuesTuple
  *    All necessary fields of the object should be provided in the json file according to the type of the object.
  *    For the buffer profiles, if the buffer pools referenced are the normal pools, like {ingress|egress}_{lossless|lossy}_pool,
  *    the zero profile name will be stored in the referenced pool's "zero_profile_name" field for the purpose of
- *    constructing the zero profile list or providing the zero profiles for PGs or queues.
+ *    - constructing the zero profile list or providing the zero profiles for PGs or queues
+ *    - fetching the zero profile for a certain pool when applying the zero profile for configured items
  *
  *  - control_fields: represents the ids required for reclaiming unused buffers, including:
  *     - pgs_to_apply_zero_profile, represents the PGs on which the zero profiles will be applied for reclaiming unused buffers
  *       If it is not provided, zero profiles will be applied on all PGs.
+ *     - ingress_zero_profile, represents the zero buffer profille which will be applied on PGs for reclaiming unused buffer.
+ *       Typically, it is provided along with pgs_to_apply_zero_profile.
+ *       In case pgs_to_apply_zero_profile is defined but ingress_zero_profile is not provided, the first zero profile on the ingress side in json file will be used.
  *     - queues_to_apply_zero_profile, represents the queues on which the zero profiles will be applied
  *       If it is not provided, zero profiles will be applied on all queues.
- *     - ingress_zero_profile, represents the zero buffer profille which will be applied on PGs for reclaiming unused buffer.
- *       If it is not provided, the zero profile of the pool referenced by "ingress_lossy_pool" will be used.
+ *     - egress_zero_profile, represents the zero buffer profille which will be applied on queues for reclaiming unused buffer.
+ *       Typically, it is provided along with queues_to_apply_zero_profile.
+ *       In case queues_to_apply_zero_profile is defined but egress_zero_profile is not provided, the first zero profile on the egress side in json file will be used.
+ *     - support_removing_buffer_items, represents whether the buffer items are supported to be removed.
  *    The number of queues and PGs are pushed into BUFFER_MAX_PARAM table in STATE_DB at the beginning of ports orchagent
  *    and will be learnt by buffer manager when it's starting.
  */
@@ -223,15 +231,19 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                 {
                     m_pgIdsToZero = fvValue(fv);
                 }
-                else if (fvField(fv) == "queues_to_apply_zero_profile")
-                {
-                    m_queueIdsToZero = fvValue(fv);
-                }
                 else if (fvField(fv) == "ingress_zero_profile")
                 {
                     m_ingressPgZeroProfileName = fvValue(fv);
                 }
-                else if (fvField(fv) == "support_remove")
+                else if (fvField(fv) == "queues_to_apply_zero_profile")
+                {
+                    m_queueIdsToZero = fvValue(fv);
+                }
+                else if (fvField(fv) == "egress_zero_profile")
+                {
+                    m_egressQueueZeroProfileName = fvValue(fv);
+                }
+                else if (fvField(fv) == "support_removing_buffer_items")
                 {
                     m_supportRemoving = (fvValue(fv) == "yes");
                 }
@@ -295,7 +307,7 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                     }
                     else if (m_zeroPoolNameSet.find(poolName) == m_zeroPoolNameSet.end())
                     {
-                        SWSS_LOG_NOTICE("Profile %s is not loaded as the referenced pool %s is not defined",
+                        SWSS_LOG_ERROR("Profile %s is not loaded as the referenced pool %s is not defined",
                                         key.c_str(),
                                         fvValue(fv).c_str());
                         poolNotFound = true;
@@ -2934,18 +2946,22 @@ task_process_status BufferMgrDynamic::handleSingleBufferPortEgressProfileListEnt
 /*
  * handleBufferObjectTables
  *
- * Arguments:
- *  tuple, the KeyOpFieldsValuesTuple, containing key, op, list of tuples consisting of field and value pair
- *  table, the name of the table
- *  keyWithIds, whether the keys contains sublevel IDs of objects.
- *   - For queue and priority groups, it is true since the keys format is like <TABLE_NAME>|<port>|IDs
- *   - For profile list tables, it is false since the keys format is <TABLE_NAME>|<port>
- *
  * For the buffer object tables, like BUFFER_PG, BUFFER_QUEUE, BUFFER_PORT_INGRESS_PROFILE_LIST, and BUFFER_PORT_EGRESS_PROFILE_LIST,
  * their keys can be either a single port or a port list separated by a comma, which can be handled by a common logic.
  * So the logic to parse the keys is common and the logic to handle each table is different.
  * This function is introduced to handle the common logic and a handler map (buffer_single_item_handler_map) is introduced
  * to dispatch to different handler according to the table name.
+ *
+ * Arguments:
+ *  tuple, the KeyOpFieldsValuesTuple, containing key, op, list of tuples consisting of field and value pair
+ *  table, the name of the table
+ *  keyWithIds, whether the keys contains sublevel IDs of objects.
+ *   - For queue and priority groups, it is true since the keys format is like <port list>|IDs
+ *     Eg: input key "Ethernet0,Ethernet4,Ethernet8,Ethernet12|3-4" will be decomposed to the following list
+ *     [Ethernet0|3-4, Ethernet4|3-4, Ethernet8|3-4, Ethernet12|3-4]
+ *   - For profile list tables, it is false since the keys format is <port list>
+ *     Eg: input key "Ethernet0,Ethernet4,Ethernet8,Ethernet12" will be decomposed to the following list
+ *     [Ethernet0, Ethernet4, Ethernet8, Ethernet12]
  *
  * It is wrapped by the following functions which are the table handler of the above tables:
  *  - handleBufferPgTable

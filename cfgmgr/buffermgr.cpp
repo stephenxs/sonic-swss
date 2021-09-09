@@ -195,7 +195,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
 
     // check if profile already exists - if yes - skip creation
     m_cfgBufferProfileTable.get(buffer_profile_key, fvVector);
-    // Crete record in BUFFER_PROFILE table
+    // Create record in BUFFER_PROFILE table
     if (fvVector.size() == 0)
     {
         SWSS_LOG_NOTICE("Creating new profile '%s'", buffer_profile_key.c_str());

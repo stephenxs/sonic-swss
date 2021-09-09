@@ -28,6 +28,13 @@ local port_set_8lanes = {}
 local lossless_port_count = 0
 
 local function iterate_all_items(all_items, check_lossless)
+    -- Iterates all items in all_items, check the buffer profile each item referencing, and update reference count accordingly
+    -- Arguments:
+    --     all_items is a list, holding all keys in BUFFER_PORT_INGRESS_PROFILE_LIST or BUFFER_PORT_EGRESS_PROFILE_LIST table
+    --     format of keys: <port name>|<ID map>, like Ethernet0|3-4
+    -- Return:
+    --     0 successful
+    --     1 failure, typically caused by the items just updated are still pended in orchagent's queue
     table.sort(all_items)
     local lossless_ports = {}
     local port
@@ -79,6 +86,13 @@ local function iterate_all_items(all_items, check_lossless)
 end
 
 local function iterate_profile_list(all_items)
+    -- Iterates all items in all_items, check the buffer profiles each item referencing, and update reference count accordingly
+    -- Arguments:
+    --     all_items is a list, holding all keys in BUFFER_PORT_INGRESS_PROFILE_LIST or BUFFER_PORT_EGRESS_PROFILE_LIST table
+    --     format of keys: <port name>
+    -- Return:
+    --     0 successful
+    --     1 failure, typically caused by the items just updated are still pended in orchagent's queue
     local port
     for i = 1, #all_items, 1 do
         -- XXX_TABLE_KEY_SET or XXX_TABLE_DEL_SET existing means the orchagent hasn't handled all updates
