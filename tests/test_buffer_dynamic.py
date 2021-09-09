@@ -585,7 +585,7 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:6")
         self.app_db.wait_for_deleted_entry("BUFFER_QUEUE_TABLE", "Ethernet0:7")
 
-        # Startup port and check whether all the PGs haved been added
+        # Startup port and check whether all the PGs have been added
         dvs.runcmd("config interface startup Ethernet0")
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:0", {"profile": lossy_pg_reference_appl_db})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:1", {"profile": lossy_pg_reference_appl_db})
