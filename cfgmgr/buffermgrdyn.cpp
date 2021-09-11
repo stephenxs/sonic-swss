@@ -1180,6 +1180,7 @@ void BufferMgrDynamic::removeZeroProfilesOnPort(port_info_t &portInfo, const str
         {
             m_applBufferQueueTable.del(portPrefix + it);
         }
+        portInfo.supported_but_not_configured_queues.clear();
     }
 }
 
@@ -3176,15 +3177,11 @@ void BufferMgrDynamic::handlePendingBufferObjects()
             {
                 if (port.second.state != PORT_ADMIN_DOWN)
                 {
+                    // The admin-down ports should not be touched here. Two scenarios
+                    // 1. If admin-status is handled ahead of m_bufferPoolReady being true,
+                    //    They should be in m_pendingApplyZeroProfilePorts and will be handled later in this function
+                    // 2. Otherwise, they should have been handled and zero profiles have been applied.
                     refreshPgsForPort(port.first, port.second.effective_speed, port.second.cable_length, port.second.mtu);
-                    for (auto &pg : m_portPgLookup[port.first])
-                    {
-                        if (!pg.second.lossless)
-                        {
-                            auto const &reference = "[BUFFER_PROFILE_TABLE:" + pg.second.running_profile_name + "]";
-                            updateBufferObjectToDb(pg.first, reference, true);
-                        }
-                    }
                 }
             }
 
