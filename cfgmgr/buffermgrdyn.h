@@ -292,6 +292,8 @@ private:
     void removeZeroProfilesOnPort(port_info_t &portInfo, const std::string &port);
     void applyNormalBufferObjectsOnPort(const std::string &port);
     void handlePendingBufferObjects();
+    void handleSetSingleBufferObjectOnAdminDonwPort(bool isPg, const std::string &port, const std::string &key, const std::string &profile);
+    void handleDelSingleBufferObjectOnAdminDonwPort(bool isPg, const std::string &port, const std::string &key, port_info_t &portInfo);
 
     // Main flows
     task_process_status reclaimReservedBufferForPort(const std::string &port);

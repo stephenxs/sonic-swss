@@ -1803,12 +1803,6 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
 
     case PORT_ADMIN_DOWN:
         SWSS_LOG_NOTICE("Skip setting BUFFER_PG for %s because the port is administratively down", port.c_str());
-        if (!m_portInitDone)
-        {
-            // In case the port is admin down during initialization, the PG will be removed from the port,
-            // which effectively notifies bufferOrch to add the item to the m_ready_list
-            m_applBufferPgTable.del(pg_key);
-        }
         break;
 
     default:
@@ -2685,10 +2679,66 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
     return task_process_status::task_success;
 }
 
+void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDonwPort(bool isPg, const string &port, const string &key, const string &profile="ingress_lossless_profile")
+{
+    if (m_portInitDone)
+    {
+        // If initialization finished, no extra handle required.
+        return;
+    }
+
+    auto &idsToZero = isPg ? m_pgIdsToZero : m_queueIdsToZero;
+    auto &table = isPg ? m_applBufferPgTable : m_applBufferQueueTable;
+
+    if (!idsToZero.empty())
+    {
+        if (port + delimiter + idsToZero != key)
+        {
+            // For admin-down ports, if zero profiles have been applied on specified items,
+            // notify APPL_DB to remove only if the item ID doesn't equal specified items
+            // and the system is during initialization
+            // This is to guarantee the port can be "ready" in orchagent
+            // In case the port is admin down during initialization, the PG will be removed from the port,
+            // which effectively notifies bufferOrch to add the item to the m_ready_list
+            table.del(key);
+        }
+    }
+    else
+    {
+        // Notify APPL_DB to add zero profile to items
+        // An side effect is the items will be ready in orchagent (added to m_ready_list)
+        auto &profileInfo = m_bufferProfileLookup[profile];
+        auto &poolInfo = m_bufferPoolLookup[profileInfo.pool_name];
+        updateBufferObjectToDb(key, poolInfo.zero_profile_name, true, false);
+    }
+}
+
+void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDonwPort(bool isPg, const string &port, const string &key, port_info_t &portInfo)
+{
+    auto &idsToZero = isPg ? m_pgIdsToZero : m_queueIdsToZero;
+    auto &supportedNotConfiguredItems = isPg ? portInfo.supported_but_not_configured_pgs : portInfo.supported_but_not_configured_queues;
+
+    if (idsToZero.empty())
+    {
+        // For admin down ports, if zero profiles have been applied to all configured items
+        // do NOT remove it otherwise SDK default value will be set for the items
+        // Move the key to supported_but_not_configured_items so that the slice of items
+        // can be removed when the port is started up
+        auto const &ids = parseObjectNameFromKey(key, 1);
+        supportedNotConfiguredItems.emplace_back(ids);
+    }
+
+    // For admin down ports, if zero profiles configured on specified items only
+    // it has been removed from APPL_DB when the port is admin down
+    // Just removing it from m_portQueueLookup or m_portPgLookup should suffice.
+    // Do NOT touch APPL_DB
+}
+
 task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &key, const string &port, const KeyOpFieldsValuesTuple &tuple)
 {
     string op = kfvOp(tuple);
     buffer_pg_t &bufferPg = m_portPgLookup[port][key];
+    port_info_t &portInfo = m_portInfoLookup[port];
 
     SWSS_LOG_DEBUG("Processing command:%s table BUFFER_PG key %s", op.c_str(), key.c_str());
     if (op == SET_COMMAND)
@@ -2719,7 +2769,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                 // Headroom override
                 pureDynamic = false;
                 transformReference(value);
-                string profileName = parseObjectNameFromReference(value);
+                const string &profileName = parseObjectNameFromReference(value);
                 if (profileName.empty())
                 {
                     SWSS_LOG_ERROR("BUFFER_PG: Invalid format of reference to profile: %s", value.c_str());
@@ -2762,26 +2812,22 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
             bufferPg.lossless = true;
         }
 
-        if (bufferPg.lossless)
+        if (PORT_ADMIN_DOWN == portInfo.state)
+        {
+            // In case the port is admin down during initialization, the PG will be removed from the port,
+            // which effectively notifies bufferOrch to add the item to the m_ready_list
+            handleSetSingleBufferObjectOnAdminDonwPort(true, port, key);
+        }
+        else if (bufferPg.lossless)
         {
             doUpdatePgTask(key, port);
         }
         else
         {
-            port_info_t &portInfo = m_portInfoLookup[port];
-            if (PORT_ADMIN_DOWN != portInfo.state)
-            {
-                SWSS_LOG_NOTICE("Inserting BUFFER_PG table entry %s into APPL_DB directly", key.c_str());
-                bufferPg.running_profile_name = bufferPg.configured_profile_name;
-                auto const &reference = "[BUFFER_PROFILE_TABLE:" + bufferPg.running_profile_name + "]";
-                updateBufferObjectToDb(key, reference, true);
-            }
-            else if (!m_portInitDone)
-            {
-                // In case the port is admin down during initialization, the PG will be removed from the port,
-                // which effectively notifies bufferOrch to add the item to the m_ready_list
-                m_applBufferPgTable.del(key);
-            }
+            SWSS_LOG_NOTICE("Inserting BUFFER_PG table entry %s into APPL_DB directly", key.c_str());
+            bufferPg.running_profile_name = bufferPg.configured_profile_name;
+            auto const &reference = "[BUFFER_PROFILE_TABLE:" + bufferPg.running_profile_name + "]";
+            updateBufferObjectToDb(key, reference, true);
         }
 
         if (!bufferPg.configured_profile_name.empty())
@@ -2806,7 +2852,11 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
             m_bufferProfileLookup[configProfileName].port_pgs.erase(key);
         }
 
-        if (bufferPg.lossless)
+        if (portInfo.state == PORT_ADMIN_DOWN)
+        {
+            handleDelSingleBufferObjectOnAdminDonwPort(true, port, key, portInfo);
+        }
+        else if (bufferPg.lossless)
         {
             doRemovePgTask(key, port);
         }
@@ -2865,8 +2915,10 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
 {
     SWSS_LOG_ENTER();
 
-    string op = kfvOp(tuple);
-    const string &queues = key;
+    const auto &op = kfvOp(tuple);
+    const auto &queues = key;
+    string profile;
+    auto &portInfo = m_portInfoLookup[port];
 
     if (op == SET_COMMAND)
     {
@@ -2882,6 +2934,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
                 if (rc != task_process_status::task_success)
                     return rc;
                 m_portQueueLookup[port][queues] = fvValue(i);
+                profile = parseObjectNameFromReference(fvValue(i));
                 SWSS_LOG_NOTICE("Queue %s has been configured on the system, referencing profile %s", key.c_str(), fvValue(i).c_str());
             }
             else
@@ -2893,10 +2946,11 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
             SWSS_LOG_INFO("Inserting field %s value %s", fvField(i).c_str(), fvValue(i).c_str());
         }
 
-        auto &portInfo = m_portInfoLookup[port];
+        // TODO: check overlap. Currently, assume there is no overlap
+
         if (PORT_ADMIN_DOWN == portInfo.state)
         {
-            m_applBufferQueueTable.del(key);
+            handleSetSingleBufferObjectOnAdminDonwPort(false, port, key, profile);
         }
         else
         {
@@ -2905,9 +2959,21 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
     }
     else if (op == DEL_COMMAND)
     {
+        if (!m_supportRemoving)
+        {
+            SWSS_LOG_ERROR("Removing queue %s is not supported on the platform", key.c_str());
+            return task_process_status::task_failed;
+        }
         SWSS_LOG_INFO("Removing entry %s from APPL_DB", key.c_str());
         m_portQueueLookup[port].erase(queues);
-        m_applBufferQueueTable.del(key);
+        if (PORT_ADMIN_DOWN == portInfo.state)
+        {
+            handleDelSingleBufferObjectOnAdminDonwPort(false, port, key, portInfo);
+        }
+        else
+        {
+            m_applBufferQueueTable.del(key);
+        }
     }
 
     return task_process_status::task_success;
