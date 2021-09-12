@@ -893,7 +893,7 @@ void BufferMgrDynamic::updateBufferObjectToDb(const string &key, const string &p
         }
 
         vector<FieldValueTuple> fvVector;
-        fvVector.emplace_back("profile", profile);
+        fvVector.emplace_back(buffer_profile_field_name, profile);
 
         table.set(key, fvVector);
     }
@@ -917,7 +917,7 @@ void BufferMgrDynamic::updateBufferObjectListToDb(const string &key, const strin
 
     vector<FieldValueTuple> fvVector;
 
-    fvVector.emplace_back("profile_list", profileList);
+    fvVector.emplace_back(buffer_profile_list_field_name, profileList);
 
     table.set(key, fvVector);
 }
@@ -1209,7 +1209,7 @@ void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
     auto &ingressProfileList = m_portIngressProfileListLookup[port];
     if (!ingressProfileList.empty())
     {
-        fvVector.emplace_back("profile_list", ingressProfileList);
+        fvVector.emplace_back(buffer_profile_list_field_name, ingressProfileList);
         m_applBufferIngressProfileListTable.set(port, fvVector);
         fvVector.clear();
     }
@@ -1217,7 +1217,7 @@ void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
     auto egressProfileList = m_portEgressProfileListLookup[port];
     if (!egressProfileList.empty())
     {
-        fvVector.emplace_back("profile_list", egressProfileList);
+        fvVector.emplace_back(buffer_profile_list_field_name, egressProfileList);
         m_applBufferEgressProfileListTable.set(port, fvVector);
         fvVector.clear();
     }
@@ -1501,7 +1501,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     if (ingressProfileListRef != m_portIngressProfileListLookup.end())
     {
         const string &zeroIngressProfileNameList = constructZeroProfileListFromNormalProfileList(ingressProfileListRef->second, port);
-        fvVector.emplace_back("profile_list", zeroIngressProfileNameList);
+        fvVector.emplace_back(buffer_profile_list_field_name, zeroIngressProfileNameList);
         m_applBufferIngressProfileListTable.set(port, fvVector);
         fvVector.clear();
     }
@@ -1511,7 +1511,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     if (egressProfileListRef != m_portEgressProfileListLookup.end())
     {
         const string &zeroEgressProfileNameList = constructZeroProfileListFromNormalProfileList(egressProfileListRef->second, port);
-        fvVector.emplace_back("profile_list", zeroEgressProfileNameList);
+        fvVector.emplace_back(buffer_profile_list_field_name, zeroEgressProfileNameList);
         m_applBufferEgressProfileListTable.set(port, fvVector);
         fvVector.clear();
     }
@@ -2927,7 +2927,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
         for (auto i : kfvFieldsValues(tuple))
         {
             // Transform the separator in values from "|" to ":"
-            if (fvField(i) == "profile")
+            if (fvField(i) == buffer_profile_field_name)
             {
                 transformReference(fvValue(i));
                 auto rc = checkBufferProfileDirection(fvValue(i), false);
@@ -2995,7 +2995,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPortProfileListEntry(con
 
         for (auto i : kfvFieldsValues(tuple))
         {
-            if (fvField(i) == "profile_list")
+            if (fvField(i) == buffer_profile_list_field_name)
             {
                 transformReference(fvValue(i));
                 auto rc = checkBufferProfileDirection(fvValue(i), ingress);
