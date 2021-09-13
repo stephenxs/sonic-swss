@@ -658,6 +658,26 @@ void BufferMgrDynamic::recalculateSharedBufferPool()
         vector<string> keys = {};
         vector<string> argv = {};
 
+        if (!m_bufferPoolReady)
+        {
+            // In case all buffer pools have a configured size,
+            // The m_bufferPoolReady will be set to true
+            // It can happen on vs.
+            bool hasDynamicSizePool = false;
+            for (auto &poolRef : m_bufferPoolLookup)
+            {
+                if (poolRef.second.dynamic_size)
+                {
+                    hasDynamicSizePool = true;
+                }
+            }
+            if (!hasDynamicSizePool)
+            {
+                m_bufferPoolReady = true;
+                SWSS_LOG_NOTICE("No pool requires calculating size dynamically. All buffer pools are ready");
+            }
+        }
+
         auto ret = runRedisScript(*m_applDb, m_bufferpoolSha, keys, argv);
 
         // The format of the result:
