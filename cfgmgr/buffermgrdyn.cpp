@@ -2707,9 +2707,21 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDonwPort(bool isPg, con
     {
         // Notify APPL_DB to add zero profile to items
         // An side effect is the items will be ready in orchagent (added to m_ready_list)
-        auto &profileInfo = m_bufferProfileLookup[profile];
-        auto &poolInfo = m_bufferPoolLookup[profileInfo.pool_name];
-        updateBufferObjectToDb(key, poolInfo.zero_profile_name, true, false);
+        string zeroProfile;
+        auto const &searchRef = m_bufferProfileLookup.find(profile);
+        if (searchRef == m_bufferProfileLookup.end())
+        {
+            // In this case, we shouldn't set the dynamic calculated flag to true
+            // It will be updated when its profile configured.
+            zeroProfile = isPg ? m_ingressPgZeroProfileName : m_egressQueueZeroProfileName;
+        }
+        else
+        {
+            auto &profileInfo = searchRef->second;
+            auto &poolInfo = m_bufferPoolLookup[profileInfo.pool_name];
+            zeroProfile = poolInfo.zero_profile_name;
+        }
+        updateBufferObjectToDb(key, zeroProfile, true, false);
     }
 }
 
