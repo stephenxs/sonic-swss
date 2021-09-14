@@ -307,7 +307,7 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                     }
                     else if (m_zeroPoolNameSet.find(poolName) == m_zeroPoolNameSet.end())
                     {
-                        SWSS_LOG_ERROR("Profile %s is not loaded as the referenced pool %s is not defined",
+                        SWSS_LOG_WARN("Profile %s is not loaded as the referenced pool %s is not defined",
                                         key.c_str(),
                                         fvValue(fv).c_str());
                         poolNotFound = true;
@@ -1395,27 +1395,40 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     {
         auto &key = it.first;
         auto &portPg = it.second;
-        auto &profileInfo = m_bufferProfileLookup[portPg.running_profile_name];
+        auto const &losslessProfile = portPg.running_profile_name.empty() ? "ingress_lossless_profile" : portPg.running_profile_name;
+        auto const &profileRef = m_bufferProfileLookup.find(losslessProfile);
+        string zeroProfile;
 
-        SWSS_LOG_INFO("Reclaiming buffer reserved for PG %s from port %s", key.c_str(), port.c_str());
+        if (profileRef != m_bufferProfileLookup.end())
+        {
+            auto &profileInfo = profileRef->second;
+            auto &poolInfo = m_bufferPoolLookup[profileInfo.pool_name];
+            zeroProfile = poolInfo.zero_profile_name;
+            profileInfo.port_pgs.erase(key);
+        }
+        else
+        {
+            // On some platform (like vs), "ingress_lossless_profile" doesn't exist.
+            auto &poolInfo = m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME];
+            zeroProfile = poolInfo.zero_profile_name;
+        }
 
-        profileInfo.port_pgs.erase(key);
+        SWSS_LOG_INFO("Reclaiming buffer reserved for PG %s", key.c_str());
+
         if (!applyZeroProfileOnSpecifiedPgs)
         {
             // Apply zero profiles on each configured PG and supported-but-not-configured PG
             // Fetch the zero profile of the pool referenced by the configured profile
-            auto &poolInfo = m_bufferPoolLookup[profileInfo.pool_name];
-            if (!poolInfo.zero_profile_name.empty())
+            if (!zeroProfile.empty())
             {
-                SWSS_LOG_INFO("Applying zero profile %s on PG %s of port %s", poolInfo.zero_profile_name.c_str(), key.c_str(), port.c_str());
-                updateBufferObjectToDb(key, poolInfo.zero_profile_name, true, true);
+                SWSS_LOG_INFO("Applying zero profile %s on PG %s of port %s", zeroProfile.c_str(), key.c_str(), port.c_str());
+                updateBufferObjectToDb(key, zeroProfile, true, true);
             }
             else
             {
                 // No zero profile defined for the pool. Reclaim buffer by removing the PG
-                SWSS_LOG_INFO("Zero profile is not defined for pool %s, reclaim reserved buffer by removing PG %s of port %s", profileInfo.pool_name.c_str(), key.c_str(), port.c_str());
-                if (!portPg.running_profile_name.empty())
-                    updateBufferObjectToDb(key, poolInfo.zero_profile_name, false);
+                SWSS_LOG_INFO("Zero profile is not defined for profile %s, reclaim reserved buffer by removing PG %s", portPg.running_profile_name.c_str(), key.c_str());
+                updateBufferObjectToDb(key, portPg.running_profile_name, false);
             }
 
             clearIdsFromMap(key, pgs_map);
@@ -1425,9 +1438,8 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
             // Apply the zero profile on specified PGs only.
             // Remove each PG first
             // In this case, removing must be supported (checked when the json was loaded)
-            SWSS_LOG_INFO("Zero profile will be applied on %s. Remove PG %s of port %s first", m_pgIdsToZero.c_str(), key.c_str(), port.c_str());
-            if (!portPg.running_profile_name.empty())
-                updateBufferObjectToDb(key, portPg.running_profile_name, false);
+            SWSS_LOG_INFO("Zero profile will be applied on %s. Remove PG %s first", m_pgIdsToZero.c_str(), key.c_str());
+            updateBufferObjectToDb(key, portPg.running_profile_name, false);
         }
 
         if (!portPg.running_profile_name.empty())
@@ -1441,7 +1453,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     {
         updateBufferObjectToDb(portKeyPrefix + m_pgIdsToZero, m_ingressPgZeroProfileName, true, true);
     }
-    else
+    else if (!m_ingressPgZeroProfileName.empty())
     {
         // Apply zero profiles on supported-but-not-configured PGs
         portInfo.supported_but_not_configured_pgs = generateSupportedButNotConfiguredItemsMap(pgs_map, portInfo.maximum_pgs);
@@ -1478,13 +1490,13 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
             auto &poolInfo = m_bufferPoolLookup[profileInfo.pool_name];
             if (!poolInfo.zero_profile_name.empty())
             {
-                SWSS_LOG_INFO("Applying zero profile %s on queue %s of port %s", poolInfo.zero_profile_name.c_str(), it.first.c_str(), port.c_str());
+                SWSS_LOG_INFO("Applying zero profile %s on queue %s", poolInfo.zero_profile_name.c_str(), it.first.c_str());
                 updateBufferObjectToDb(it.first, poolInfo.zero_profile_name, true, false);
             }
             else
             {
                 // No zero profile defined for the pool. Reclaim buffer by removing the PG
-                SWSS_LOG_INFO("Zero profile is not defined for pool %s, reclaim reserved buffer by removing queue %s of port %s", profileInfo.pool_name.c_str(), it.first.c_str(), port.c_str());
+                SWSS_LOG_INFO("Zero profile is not defined for pool %s, reclaim reserved buffer by removing queue %s", profileInfo.pool_name.c_str(), it.first.c_str());
                 updateBufferObjectToDb(it.first, poolInfo.zero_profile_name, false, false);
             }
 
@@ -1495,7 +1507,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
             // Apply the zero profile on specified queues only.
             // Remove each queue first
             // Removing must be supported in this case
-            SWSS_LOG_INFO("Zero profile will be applied on %s. Remove queue %s of port %s first", m_queueIdsToZero.c_str(), it.first.c_str(), port.c_str());
+            SWSS_LOG_INFO("Zero profile will be applied on %s. Remove queue %s first", m_queueIdsToZero.c_str(), it.first.c_str());
             updateBufferObjectToDb(it.first, it.second, false, false);
         }
     }
@@ -1505,7 +1517,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     {
         updateBufferObjectToDb(portKeyPrefix + m_queueIdsToZero, m_egressQueueZeroProfileName, true, false);
     }
-    else
+    else if (!m_egressQueueZeroProfileName.empty())
     {
         portInfo.supported_but_not_configured_queues = generateSupportedButNotConfiguredItemsMap(queues_map, portInfo.maximum_queues);
         for(auto &it: portInfo.supported_but_not_configured_queues)
