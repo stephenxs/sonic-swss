@@ -39,10 +39,15 @@ class TestBufferMgrDyn(object):
         # Check whether cable length has been configured
         fvs = self.config_db.wait_for_entry("CABLE_LENGTH", "AZURE")
         self.originalCableLen = fvs["Ethernet0"]
+        self.cableLenBeforeTest = self.originalCableLen
         if self.originalCableLen == self.cableLenTest1:
             self.cableLenTest1 = "20m"
         elif self.originalCableLen == self.cableLenTest2:
             self.cableLenTest2 = "20m"
+        elif self.originalCableLen == "0m":
+            fvs["Ethernet0"] = "5m"
+            self.originalCableLen = "5m"
+            self.config_db.update_entry("CABLE_LENGTH", "AZURE", fvs)
 
         fvs = {"mmu_size": "12766208"}
         self.state_db.create_entry("BUFFER_MAX_PARAM_TABLE", "global", fvs)
@@ -79,6 +84,8 @@ class TestBufferMgrDyn(object):
             "There is still lossless profile ({}) {} seconds after all lossless PGs have been removed".format(lossless_profile, seconds_delayed)
 
         self.setup_asic_db(dvs)
+
+        time.sleep(10)
 
         self.initialized = True
 
@@ -141,11 +148,17 @@ class TestBufferMgrDyn(object):
         cable_lengths['Ethernet0'] = cable_length
         self.config_db.update_entry('CABLE_LENGTH', 'AZURE', cable_lengths)
 
+    def check_queues_after_port_startup(self, dvs):
+        self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "{}:0-2".format("Ethernet0"), {"profile": "[BUFFER_PROFILE_TABLE:egress_lossy_profile]"})
+        self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "{}:3-4".format("Ethernet0"), {"profile": "[BUFFER_PROFILE_TABLE:egress_lossless_profile]"})
+        self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "{}:5-6".format("Ethernet0"), {"profile": "[BUFFER_PROFILE_TABLE:egress_lossy_profile]"})
+
     def test_changeSpeed(self, dvs, testlog):
         self.setup_db(dvs)
 
         # Startup interface
         dvs.runcmd('config interface startup Ethernet0')
+        self.check_queues_after_port_startup(dvs)
 
         # Configure lossless PG 3-4 on interface
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
