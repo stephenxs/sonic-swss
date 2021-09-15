@@ -271,6 +271,7 @@ private:
     std::string getMaxSpeedFromList(std::string speedList);
     std::vector<std::string> generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId);
     void clearIdsFromMap(const std::string &key, unsigned long &idsMap);
+    std::string &fetchZeroProfileFromNormalProfile(const std::string &profile);
 
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);

@@ -1149,16 +1149,15 @@ string BufferMgrDynamic::constructZeroProfileListFromNormalProfileList(const str
     for (auto &profileRef : profileRefs)
     {
         const auto &profileName = parseObjectNameFromReference(profileRef);
-        auto &profileObj = m_bufferProfileLookup[profileName];
-        auto &poolObj = m_bufferPoolLookup[profileObj.pool_name];
-        if (!poolObj.zero_profile_name.empty())
+        const auto &zeroProfile = fetchZeroProfileFromNormalProfile(profileName);
+        if (!zeroProfile.empty())
         {
-            zeroProfileNameList += poolObj.zero_profile_name + ',';
+            zeroProfileNameList += zeroProfile + ',';
         }
         else
         {
-            SWSS_LOG_WARN("Unable to apply zero profile for pool %s on port %s because no zero profile configured for the pool",
-                          profileObj.pool_name.c_str(),
+            SWSS_LOG_WARN("Unable to apply zero profile for profile %s on port %s because no zero profile configured for the pool",
+                          profileName.c_str(),
                           port.c_str());
         }
     }
@@ -1329,6 +1328,14 @@ vector<string> BufferMgrDynamic::generateIdListFromMap(unsigned long idsMap, sai
     return extraIdsToReclaim;
 }
 
+string &BufferMgrDynamic::fetchZeroProfileFromNormalProfile(const string &profile)
+{
+    auto const &profileRef = m_bufferProfileLookup.find(profile);
+    auto const &poolName = (profileRef == m_bufferProfileLookup.end() ? INGRESS_LOSSLESS_PG_POOL_NAME : profileRef->second.pool_name);
+    auto &poolInfo = m_bufferPoolLookup[poolName];
+
+    return poolInfo.zero_profile_name;
+}
 /*
  * reclaimReservedBufferForPort
  * Called when a port is admin down
@@ -1395,22 +1402,11 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     {
         auto &key = it.first;
         auto &portPg = it.second;
-        auto const &losslessProfile = portPg.running_profile_name.empty() ? "ingress_lossless_profile" : portPg.running_profile_name;
-        auto const &profileRef = m_bufferProfileLookup.find(losslessProfile);
-        string zeroProfile;
+        const string &zeroProfile = fetchZeroProfileFromNormalProfile(portPg.running_profile_name);
 
-        if (profileRef != m_bufferProfileLookup.end())
+        if (!portPg.running_profile_name.empty())
         {
-            auto &profileInfo = profileRef->second;
-            auto &poolInfo = m_bufferPoolLookup[profileInfo.pool_name];
-            zeroProfile = poolInfo.zero_profile_name;
-            profileInfo.port_pgs.erase(key);
-        }
-        else
-        {
-            // On some platform (like vs), "ingress_lossless_profile" doesn't exist.
-            auto &poolInfo = m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME];
-            zeroProfile = poolInfo.zero_profile_name;
+            m_bufferProfileLookup[portPg.running_profile_name].port_pgs.erase(key);
         }
 
         SWSS_LOG_INFO("Reclaiming buffer reserved for PG %s", key.c_str());
@@ -1421,7 +1417,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
             // Fetch the zero profile of the pool referenced by the configured profile
             if (!zeroProfile.empty())
             {
-                SWSS_LOG_INFO("Applying zero profile %s on PG %s of port %s", zeroProfile.c_str(), key.c_str(), port.c_str());
+                SWSS_LOG_INFO("Applying zero profile %s on PG %s", zeroProfile.c_str(), key.c_str());
                 updateBufferObjectToDb(key, zeroProfile, true, true);
             }
             else
@@ -1479,7 +1475,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     for (auto &it : portQueues)
     {
         auto const &profileName = parseObjectNameFromReference(it.second);
-        auto &profileInfo = m_bufferProfileLookup[profileName];
+        auto const &zeroProfile = fetchZeroProfileFromNormalProfile(profileName);
 
         SWSS_LOG_INFO("Reclaiming buffer reserved for queue %s from port %s", it.first.c_str(), port.c_str());
 
@@ -1487,17 +1483,16 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
         {
             // Apply zero profiles on each configured queues separatedly
             // Fetch the zero profile of the pool referenced by the configured profile
-            auto &poolInfo = m_bufferPoolLookup[profileInfo.pool_name];
-            if (!poolInfo.zero_profile_name.empty())
+            if (!zeroProfile.empty())
             {
-                SWSS_LOG_INFO("Applying zero profile %s on queue %s", poolInfo.zero_profile_name.c_str(), it.first.c_str());
-                updateBufferObjectToDb(it.first, poolInfo.zero_profile_name, true, false);
+                SWSS_LOG_INFO("Applying zero profile %s on queue %s", zeroProfile.c_str(), it.first.c_str());
+                updateBufferObjectToDb(it.first, zeroProfile, true, false);
             }
             else
             {
                 // No zero profile defined for the pool. Reclaim buffer by removing the PG
-                SWSS_LOG_INFO("Zero profile is not defined for pool %s, reclaim reserved buffer by removing queue %s", profileInfo.pool_name.c_str(), it.first.c_str());
-                updateBufferObjectToDb(it.first, poolInfo.zero_profile_name, false, false);
+                SWSS_LOG_INFO("Zero profile can not be fetched from profile %s, reclaim reserved buffer by removing queue %s", profileName.c_str(), it.first.c_str());
+                updateBufferObjectToDb(it.first, zeroProfile, false, false);
             }
 
             clearIdsFromMap(it.first, queues_map);
@@ -2711,7 +2706,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
     return task_process_status::task_success;
 }
 
-void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDonwPort(bool isPg, const string &port, const string &key, const string &profile="ingress_lossless_profile")
+void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDonwPort(bool isPg, const string &port, const string &key, const string &profile)
 {
     if (m_portInitDone)
     {
@@ -2721,6 +2716,7 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDonwPort(bool isPg, con
 
     auto &idsToZero = isPg ? m_pgIdsToZero : m_queueIdsToZero;
     auto &table = isPg ? m_applBufferPgTable : m_applBufferQueueTable;
+    auto const &objectName = isPg ? "priority group" : "queue";
 
     if (!idsToZero.empty())
     {
@@ -2739,21 +2735,17 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDonwPort(bool isPg, con
     {
         // Notify APPL_DB to add zero profile to items
         // An side effect is the items will be ready in orchagent (added to m_ready_list)
-        string zeroProfile;
-        auto const &searchRef = m_bufferProfileLookup.find(profile);
-        if (searchRef == m_bufferProfileLookup.end())
+        string &zeroProfile = fetchZeroProfileFromNormalProfile(profile);
+        if (!zeroProfile.empty())
         {
-            // In this case, we shouldn't set the dynamic calculated flag to true
-            // It will be updated when its profile configured.
-            zeroProfile = isPg ? m_ingressPgZeroProfileName : m_egressQueueZeroProfileName;
+            SWSS_LOG_INFO("Reclaim reserved buffer for %s %s by applying zero profile %s", objectName, key.c_str(), zeroProfile.c_str());
+            updateBufferObjectToDb(key, zeroProfile, true, isPg);
         }
         else
         {
-            auto &profileInfo = searchRef->second;
-            auto &poolInfo = m_bufferPoolLookup[profileInfo.pool_name];
-            zeroProfile = poolInfo.zero_profile_name;
+            SWSS_LOG_INFO("Reclaim reserved buffer for %s %s by removing it due to empty zero profile", objectName, key.c_str());
+            updateBufferObjectToDb(key, zeroProfile, false, isPg);
         }
-        updateBufferObjectToDb(key, zeroProfile, true, false);
     }
 }
 
@@ -2799,7 +2791,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
         if (!bufferPg.configured_profile_name.empty())
         {
             m_bufferProfileLookup[bufferPg.configured_profile_name].port_pgs.erase(key);
-            bufferPg.configured_profile_name = "";
+            bufferPg.configured_profile_name.clear();
         }
 
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
@@ -2860,7 +2852,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
         {
             // In case the port is admin down during initialization, the PG will be removed from the port,
             // which effectively notifies bufferOrch to add the item to the m_ready_list
-            handleSetSingleBufferObjectOnAdminDonwPort(true, port, key);
+            handleSetSingleBufferObjectOnAdminDonwPort(true, port, key, bufferPg.configured_profile_name);
         }
         else if (bufferPg.lossless)
         {
@@ -2886,6 +2878,12 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
         // 2. Update internal caches
         string &runningProfileName = bufferPg.running_profile_name;
         string &configProfileName = bufferPg.configured_profile_name;
+
+        if (!m_supportRemoving)
+        {
+            SWSS_LOG_ERROR("Removing priority group %s is not supported on the platform", key.c_str());
+            return task_process_status::task_failed;
+        }
 
         if (!runningProfileName.empty())
         {
