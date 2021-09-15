@@ -269,7 +269,7 @@ private:
         return !value.empty() && value != "0";
     }
     std::string getMaxSpeedFromList(std::string speedList);
-    std::vector<std::string> generateSupportedButNotConfiguredItemsMap(unsigned long idsMap, sai_uint32_t maxId);
+    std::vector<std::string> generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId);
     void clearIdsFromMap(const std::string &key, unsigned long &idsMap);
 
     // APPL_DB table operations
@@ -289,7 +289,7 @@ private:
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
     task_process_status checkBufferProfileDirection(const std::string &profiles, bool expectIngress);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
-    void removeZeroProfilesOnPort(port_info_t &portInfo, const std::string &port);
+    void removeSupportedButNotConfiguredItemsOnPort(port_info_t &portInfo, const std::string &port);
     void applyNormalBufferObjectsOnPort(const std::string &port);
     void handlePendingBufferObjects();
     void handleSetSingleBufferObjectOnAdminDonwPort(bool isPg, const std::string &port, const std::string &key, const std::string &profile);

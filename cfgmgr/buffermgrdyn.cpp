@@ -1113,7 +1113,7 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
  * The following functions are defnied for reclaiming reserved buffers
  *  - constructZeroProfileListFromNormalProfileList
  *  - reclaimReservedBufferForPort
- *  - removeZeroProfilesOnPort//TBD
+ *  - removeSupportedButNotConfiguredItemsOnPort
  *  - applyNormalBufferObjectsOnPort, handling queues and profile lists.
  *    The priority groups are handle by refreshPgsForPort
  *
@@ -1121,7 +1121,7 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
  * Shutdown flow (to reclaim unused buffer):
  *  1. reclaimReservedBufferForPort
  * Start up flow (to reserved buffer for the port)
- *  1. removeZeroProfilesOnPort
+ *  1. removeSupportedButNotConfiguredItemsOnPort
  *  2. applyNormalBufferObjectsOnPort
  *  3. refreshPgsForPort
  */
@@ -1170,7 +1170,7 @@ string BufferMgrDynamic::constructZeroProfileListFromNormalProfileList(const str
 }
 
 /*
- * removeZeroProfilesOnPort
+ * removeSupportedButNotConfiguredItemsOnPort
  * Remove the supported-but-not-configured buffer items from the port.
  * They were applied when the port was shut down.
  * Called when a port is started up.
@@ -1181,7 +1181,7 @@ string BufferMgrDynamic::constructZeroProfileListFromNormalProfileList(const str
  * Return:
  *  None.
  */
-void BufferMgrDynamic::removeZeroProfilesOnPort(port_info_t &portInfo, const string &portName)
+void BufferMgrDynamic::removeSupportedButNotConfiguredItemsOnPort(port_info_t &portInfo, const string &portName)
 {
     auto const &portPrefix = portName + delimiter;
 
@@ -1283,7 +1283,7 @@ void BufferMgrDynamic::clearIdsFromMap(const string &key, unsigned long &idsMap)
  *     Input idsMap: 00100110b, maxId: 8
  *     Return vector: ["1-2", "5"]
  */
-vector<string> BufferMgrDynamic::generateSupportedButNotConfiguredItemsMap(unsigned long idsMap, sai_uint32_t maxId)
+vector<string> BufferMgrDynamic::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId)
 {
     long currentIdMask = 1;
     bool started = false, needGenerateMap = false;
@@ -1456,7 +1456,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     else if (!m_ingressPgZeroProfileName.empty())
     {
         // Apply zero profiles on supported-but-not-configured PGs
-        portInfo.supported_but_not_configured_pgs = generateSupportedButNotConfiguredItemsMap(pgs_map, portInfo.maximum_pgs);
+        portInfo.supported_but_not_configured_pgs = generateIdListFromMap(pgs_map, portInfo.maximum_pgs);
         for(auto &it: portInfo.supported_but_not_configured_pgs)
         {
             updateBufferObjectToDb(portKeyPrefix + it, m_ingressPgZeroProfileName, true, true);
@@ -1519,7 +1519,7 @@ task_process_status BufferMgrDynamic::reclaimReservedBufferForPort(const string 
     }
     else if (!m_egressQueueZeroProfileName.empty())
     {
-        portInfo.supported_but_not_configured_queues = generateSupportedButNotConfiguredItemsMap(queues_map, portInfo.maximum_queues);
+        portInfo.supported_but_not_configured_queues = generateIdListFromMap(queues_map, portInfo.maximum_queues);
         for(auto &it: portInfo.supported_but_not_configured_queues)
         {
             updateBufferObjectToDb(portKeyPrefix + it, m_egressQueueZeroProfileName, true, false);
@@ -2425,7 +2425,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         {
             if (was_admin_down)
             {
-                removeZeroProfilesOnPort(portInfo, port);
+                removeSupportedButNotConfiguredItemsOnPort(portInfo, port);
                 applyNormalBufferObjectsOnPort(port);
                 m_adminDownPorts.erase(port);
                 m_pendingApplyZeroProfilePorts.erase(port);
