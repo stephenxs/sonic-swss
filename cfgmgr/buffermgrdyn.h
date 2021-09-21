@@ -175,9 +175,7 @@ private:
     std::string m_pgIdsToZero;
     std::string m_queueIdsToZero;
 
-    // PORT and CABLE_LENGTH table and caches
-    Table m_cfgPortTable;
-    Table m_cfgCableLenTable;
+    // PORT table and caches
     Table m_statePortTable;
     // m_portInfoLookup
     // key: port name
@@ -193,7 +191,6 @@ private:
 
     // BUFFER_PROFILE table and caches
     ProducerStateTable m_applBufferProfileTable;
-    Table m_cfgBufferProfileTable;
     Table m_stateBufferProfileTable;
     // m_bufferProfileLookup - the cache for the following set:
     // 1. CFG_BUFFER_PROFILE
@@ -203,7 +200,6 @@ private:
 
     // BUFFER_PG table and caches
     ProducerStateTable m_applBufferPgTable;
-    Table m_cfgBufferPgTable;
     // m_portPgLookup - the cache for CFG_BUFFER_PG and APPL_BUFFER_PG
     // 1st level key: port name, 2nd level key: PGs
     // Updated in:
@@ -226,7 +222,6 @@ private:
     port_profile_list_lookup_t m_portEgressProfileListLookup;
 
     // Other tables
-    Table m_cfgLosslessPgPoolTable;
     Table m_cfgDefaultLosslessBufferParam;
 
     Table m_stateBufferMaximumTable;
