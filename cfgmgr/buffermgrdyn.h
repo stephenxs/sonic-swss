@@ -16,8 +16,16 @@ namespace swss {
 
 #define BUFFERMGR_TIMER_PERIOD 10
 
+typedef enum {
+    BUFFER_INGRESS = 0,
+    BUFFER_PG = BUFFER_INGRESS,
+    BUFFER_EGRESS = 1,
+    BUFFER_QUEUE = BUFFER_EGRESS,
+    BUFFER_DIR_MAX
+} buffer_direction_t;
+
 typedef struct {
-    bool ingress;
+    buffer_direction_t direction;
     bool dynamic_size;
     std::string total_size;
     std::string mode;
@@ -46,8 +54,8 @@ typedef struct {
     profile_state_t state;
     bool dynamic_calculated;
     bool static_configured;
-    bool ingress;
     bool lossless;
+    buffer_direction_t direction;
 
     // fields representing parameters by which the headroom is calculated
     std::string speed;
@@ -70,6 +78,10 @@ typedef struct {
 } buffer_profile_t;
 
 typedef struct {
+    std::string running_profile_name;
+} buffer_object_t;
+
+typedef struct : public buffer_object_t{
     bool lossless;
     bool dynamic_calculated;
     bool static_configured;
@@ -77,7 +89,6 @@ typedef struct {
     // - the configured profile for static one,
     // - the dynamically generated profile otherwise.
     std::string configured_profile_name;
-    std::string running_profile_name;
 } buffer_pg_t;
 
 typedef enum {
@@ -102,10 +113,8 @@ typedef struct {
     std::string supported_speeds;
 
     long lane_count;
-    sai_uint32_t maximum_queues;
-    std::vector<std::string> supported_but_not_configured_queues;
-    sai_uint32_t maximum_pgs;
-    std::vector<std::string> supported_but_not_configured_pgs;
+    sai_uint32_t maximum_buffer_objects[BUFFER_DIR_MAX];
+    std::vector<std::string> supported_but_not_configured_buffer_objects[BUFFER_DIR_MAX];
 } port_info_t;
 
 //TODO:
@@ -126,7 +135,7 @@ typedef std::map<std::string, buffer_pg_t> buffer_pg_lookup_t;
 //map from port to all its pgs
 typedef std::map<std::string, buffer_pg_lookup_t> port_pg_lookup_t;
 //map from object name to its profile
-typedef std::map<std::string, std::string> buffer_object_lookup_t;
+typedef std::map<std::string, buffer_object_t> buffer_object_lookup_t;
 //map from port to all its objects
 typedef std::map<std::string, buffer_object_lookup_t> port_object_lookup_t;
 //map from port to profile_list
@@ -142,6 +151,9 @@ public:
 
 private:
     std::string m_platform;
+    std::vector<buffer_direction_t> m_bufferDirections;
+    const std::string m_bufferObjectNames[BUFFER_DIR_MAX];
+    const std::string m_bufferDirectionNames[BUFFER_DIR_MAX];
 
     typedef task_process_status (BufferMgrDynamic::*buffer_table_handler)(KeyOpFieldsValuesTuple &t);
     typedef std::map<std::string, buffer_table_handler> buffer_table_handler_map;
@@ -170,10 +182,8 @@ private:
     std::vector<std::pair<std::string, std::string>> m_zeroProfiles;
     bool m_zeroProfilesLoaded;
     bool m_supportRemoving;
-    std::string m_ingressPgZeroProfileName;
-    std::string m_egressQueueZeroProfileName;
-    std::string m_pgIdsToZero;
-    std::string m_queueIdsToZero;
+    std::string m_bufferZeroProfileName[BUFFER_DIR_MAX];
+    std::string m_bufferObjectIdsToZero[BUFFER_DIR_MAX];
 
     // PORT table and caches
     Table m_statePortTable;
@@ -199,7 +209,7 @@ private:
     buffer_profile_lookup_t m_bufferProfileLookup;
 
     // BUFFER_PG table and caches
-    ProducerStateTable m_applBufferPgTable;
+    ProducerStateTable m_applBufferObjectTables[BUFFER_DIR_MAX];
     // m_portPgLookup - the cache for CFG_BUFFER_PG and APPL_BUFFER_PG
     // 1st level key: port name, 2nd level key: PGs
     // Updated in:
@@ -208,17 +218,15 @@ private:
     port_pg_lookup_t m_portPgLookup;
 
     // BUFFER_QUEUE table and caches
-    ProducerStateTable m_applBufferQueueTable;
     // m_portQueueLookup - the cache for BUFFER_QUEUE table
     // 1st level key: port name, 2nd level key: queues
     port_object_lookup_t m_portQueueLookup;
 
-    // BUFFER_INGRESS_PROFILE_LIST table and caches
-    ProducerStateTable m_applBufferIngressProfileListTable;
-    port_profile_list_lookup_t m_portIngressProfileListLookup;
+    // BUFFER_INGRESS_PROFILE_LIST/BUFFER_EGRESS_PROFILE_LIST table and caches
+    ProducerStateTable m_applBufferProfileListTables[BUFFER_DIR_MAX];
+    port_profile_list_lookup_t m_portProfileListLookups[BUFFER_DIR_MAX];
 
-    // BUFFER_EGRESS_PROFILE_LIST table and caches
-    ProducerStateTable m_applBufferEgressProfileListTable;
+    //  table and caches
     port_profile_list_lookup_t m_portEgressProfileListLookup;
 
     // Other tables
@@ -271,8 +279,8 @@ private:
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
     void updateBufferProfileToDb(const std::string &name, const buffer_profile_t &profile);
-    void updateBufferObjectToDb(const std::string &key, const std::string &profile, bool add, bool isPg);
-    void updateBufferObjectListToDb(const std::string &key, const std::string &profileList, bool ingress);
+    void updateBufferObjectToDb(const std::string &key, const std::string &profile, bool add, buffer_direction_t dir);
+    void updateBufferObjectListToDb(const std::string &key, const std::string &profileList, buffer_direction_t dir);
 
     // Meta flows
     bool needRefreshPortDueToEffectiveSpeed(port_info_t &portInfo, std::string &portName);
@@ -283,16 +291,16 @@ private:
     void releaseProfile(const std::string &profile_name);
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
-    task_process_status checkBufferProfileDirection(const std::string &profiles, bool expectIngress);
+    task_process_status checkBufferProfileDirection(const std::string &profiles, buffer_direction_t dir);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
     void removeSupportedButNotConfiguredItemsOnPort(port_info_t &portInfo, const std::string &port);
     void applyNormalBufferObjectsOnPort(const std::string &port);
     void handlePendingBufferObjects();
-    void handleSetSingleBufferObjectOnAdminDonwPort(bool isPg, const std::string &port, const std::string &key, const std::string &profile);
-    void handleDelSingleBufferObjectOnAdminDonwPort(bool isPg, const std::string &port, const std::string &key, port_info_t &portInfo);
+    void handleSetSingleBufferObjectOnAdminDonwPort(buffer_direction_t direction, const std::string &port, const std::string &key, const std::string &profile);
+    void handleDelSingleBufferObjectOnAdminDonwPort(buffer_direction_t direction, const std::string &port, const std::string &key, port_info_t &portInfo);
 
     // Main flows
-    task_process_status reclaimReservedBufferForPort(const std::string &port);
+    template<class T> task_process_status reclaimReservedBufferForPort(const std::string &port, T &obj, buffer_direction_t dir);
     task_process_status refreshPgsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
     task_process_status doUpdatePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doRemovePgTask(const std::string &pg_key, const std::string &port);
@@ -309,7 +317,7 @@ private:
     task_process_status handleBufferProfileTable(KeyOpFieldsValuesTuple &tuple);
     task_process_status handleSingleBufferPgEntry(const std::string &key, const std::string &port, const KeyOpFieldsValuesTuple &tuple);
     task_process_status handleSingleBufferQueueEntry(const std::string &key, const std::string &port, const KeyOpFieldsValuesTuple &tuple);
-    task_process_status handleSingleBufferPortProfileListEntry(const std::string &key, bool ingress, const KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleSingleBufferPortProfileListEntry(const std::string &key, buffer_direction_t dir, const KeyOpFieldsValuesTuple &tuple);
     task_process_status handleSingleBufferPortIngressProfileListEntry(const std::string &key, const std::string &port, const KeyOpFieldsValuesTuple &tuple);
     task_process_status handleSingleBufferPortEgressProfileListEntry(const std::string &key, const std::string &port, const KeyOpFieldsValuesTuple &tuple);
     task_process_status handleBufferObjectTables(KeyOpFieldsValuesTuple &tuple, const std::string &table, bool keyWithIds);
