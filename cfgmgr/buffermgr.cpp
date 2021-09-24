@@ -132,7 +132,7 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
 */
 task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
 {
-    vector<FieldValueTuple> fvVector;
+    vector<FieldValueTuple> fvVectorPg, fvVectorProfile;
     string cable;
     string speed;
 
@@ -160,13 +160,14 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
                          buffer_profile_key +
                          "]";
 
+    m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
+
     if (!admin_up && m_platform == "mellanox")
     {
         // Remove the entry in BUFFER_PG table if any
-        m_cfgBufferPgTable.get(buffer_pg_key, fvVector);
-        if (!fvVector.empty())
+        if (!fvVectorPg.empty())
         {
-            for (auto &prop : fvVector)
+            for (auto &prop : fvVectorPg)
             {
                 if (fvField(prop) == "profile")
                 {
@@ -194,9 +195,9 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
     }
 
     // check if profile already exists - if yes - skip creation
-    m_cfgBufferProfileTable.get(buffer_profile_key, fvVector);
+    m_cfgBufferProfileTable.get(buffer_profile_key, fvVectorProfile);
     // Create record in BUFFER_PROFILE table
-    if (fvVector.size() == 0)
+    if (fvVectorProfile.size() == 0)
     {
         SWSS_LOG_NOTICE("Creating new profile '%s'", buffer_profile_key.c_str());
 
@@ -214,28 +215,24 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
                                    m_cfgBufferProfileTable.getTableNameSeparator() +
                                    INGRESS_LOSSLESS_PG_POOL_NAME;
 
-        fvVector.push_back(make_pair("pool", "[" + pg_pool_reference + "]"));
-        fvVector.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
+        fvVectorProfile.push_back(make_pair("pool", "[" + pg_pool_reference + "]"));
+        fvVectorProfile.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
         if (m_pgProfileLookup[speed][cable].xon_offset.length() > 0) {
-            fvVector.push_back(make_pair("xon_offset",
+            fvVectorProfile.push_back(make_pair("xon_offset",
                                          m_pgProfileLookup[speed][cable].xon_offset));
         }
-        fvVector.push_back(make_pair("xoff", m_pgProfileLookup[speed][cable].xoff));
-        fvVector.push_back(make_pair("size", m_pgProfileLookup[speed][cable].size));
-        fvVector.push_back(make_pair(mode, m_pgProfileLookup[speed][cable].threshold));
-        m_cfgBufferProfileTable.set(buffer_profile_key, fvVector);
+        fvVectorProfile.push_back(make_pair("xoff", m_pgProfileLookup[speed][cable].xoff));
+        fvVectorProfile.push_back(make_pair("size", m_pgProfileLookup[speed][cable].size));
+        fvVectorProfile.push_back(make_pair(mode, m_pgProfileLookup[speed][cable].threshold));
+        m_cfgBufferProfileTable.set(buffer_profile_key, fvVectorProfile);
     }
     else
     {
         SWSS_LOG_NOTICE("Reusing existing profile '%s'", buffer_profile_key.c_str());
     }
 
-    fvVector.clear();
-
     /* Check if PG Mapping is already then log message and return. */
-    m_cfgBufferPgTable.get(buffer_pg_key, fvVector);
-
-    for (auto& prop : fvVector)
+    for (auto& prop : fvVectorPg)
     {
         if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
         {
@@ -244,10 +241,10 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
         }
     }
 
-    fvVector.clear();
+    fvVectorPg.clear();
 
-    fvVector.push_back(make_pair("profile", profile_ref));
-    m_cfgBufferPgTable.set(buffer_pg_key, fvVector);
+    fvVectorPg.push_back(make_pair("profile", profile_ref));
+    m_cfgBufferPgTable.set(buffer_pg_key, fvVectorPg);
     return task_process_status::task_success;
 }
 
