@@ -228,7 +228,7 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                 }
                 else if (fvField(fv) == "ingress_zero_profile")
                 {
-                    m_bufferZeroProfileName[BUFFER_PG] = parseObjectNameFromReference(fvValue(fv));
+                    m_bufferZeroProfileName[BUFFER_PG] = fvValue(fv);
                 }
                 else if (fvField(fv) == "queues_to_apply_zero_profile")
                 {
@@ -236,7 +236,7 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                 }
                 else if (fvField(fv) == "egress_zero_profile")
                 {
-                    m_bufferZeroProfileName[BUFFER_QUEUE] = parseObjectNameFromReference(fvValue(fv));
+                    m_bufferZeroProfileName[BUFFER_QUEUE] = fvValue(fv);
                 }
                 else if (fvField(fv) == "support_removing_buffer_items")
                 {
@@ -272,8 +272,7 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
             {
                 if (fvField(fv) == "pool")
                 {
-                    auto &poolRef = fvValue(fv);
-                    const auto &poolName = parseObjectNameFromReference(poolRef);
+                    const auto &poolName = fvValue(fv);
                     auto poolSearchRef = m_bufferPoolLookup.find(poolName);
                     if (poolSearchRef != m_bufferPoolLookup.end())
                     {
@@ -417,32 +416,6 @@ void BufferMgrDynamic::transformSeperator(string &name)
         name.replace(pos, 1, ":");
 }
 
-void BufferMgrDynamic::transformReference(string &name)
-{
-    auto references = tokenize(name, list_item_delimiter);
-    int ref_index = 0;
-
-    name = "";
-
-    for (auto &reference : references)
-    {
-        if (ref_index != 0)
-            name += list_item_delimiter;
-        ref_index ++;
-
-        auto keys = tokenize(reference, config_db_key_delimiter);
-        int key_index = 0;
-        for (auto &key : keys)
-        {
-            if (key_index == 0)
-                name += key + "_TABLE";
-            else
-                name += delimiter + key;
-            key_index ++;
-        }
-    }
-}
-
 // For string "TABLE_NAME|objectname", returns "objectname"
 string BufferMgrDynamic::parseObjectNameFromKey(const string &key, size_t pos = 0)
 {
@@ -453,13 +426,6 @@ string BufferMgrDynamic::parseObjectNameFromKey(const string &key, size_t pos = 
         return string();
     }
     return keys[pos];
-}
-
-// For string "[foo]", returns "foo"
-string BufferMgrDynamic::parseObjectNameFromReference(const string &reference)
-{
-    auto objName = reference.substr(1, reference.size() - 2);
-    return parseObjectNameFromKey(objName, 1);
 }
 
 string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string &cable, const string &mtu, const string &threshold, const string &gearbox_model, long lane_count)
@@ -860,9 +826,6 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
 
     // profile threshold field name
     mode += "_th";
-    string pg_pool_reference = "[" + string(APP_BUFFER_POOL_TABLE_NAME) +
-        m_applBufferProfileTable.getTableNameSeparator() +
-        profile.pool_name + "]";
 
     if (profile.lossless)
     {
@@ -873,7 +836,7 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
         fvVector.emplace_back("xoff", profile.xoff);
     }
     fvVector.emplace_back("size", profile.size);
-    fvVector.emplace_back("pool", pg_pool_reference);
+    fvVector.emplace_back("pool", profile.pool_name);
     fvVector.emplace_back(mode, profile.threshold);
 
     m_applBufferProfileTable.set(name, fvVector);
@@ -897,7 +860,7 @@ void BufferMgrDynamic::updateBufferObjectToDb(const string &key, const string &p
         }
 
         vector<FieldValueTuple> fvVector;
-        fvVector.emplace_back(buffer_profile_field_name, "[BUFFER_PROFILE_TABLE:" + profile + "]");
+        fvVector.emplace_back(buffer_profile_field_name, profile);
 
         table.set(key, fvVector);
     }
@@ -1130,13 +1093,12 @@ string BufferMgrDynamic::constructZeroProfileListFromNormalProfileList(const str
     string zeroProfileNameList;
 
     auto profileRefs = tokenize(normalProfileList, ',');
-    for (auto &profileRef : profileRefs)
+    for (auto &profileName : profileRefs)
     {
-        const auto &profileName = parseObjectNameFromReference(profileRef);
         const auto &zeroProfile = fetchZeroProfileFromNormalProfile(profileName);
         if (!zeroProfile.empty())
         {
-            zeroProfileNameList += "[BUFFER_PROFILE_TABLE:" + zeroProfile + "],";
+            zeroProfileNameList += zeroProfile + ",";
         }
         else
         {
@@ -2472,8 +2434,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
             {
                 if (!value.empty())
                 {
-                    transformReference(value);
-                    auto poolName = parseObjectNameFromReference(value);
+                    auto &poolName = value;
                     if (poolName.empty())
                     {
                         SWSS_LOG_ERROR("BUFFER_PROFILE: Invalid format of reference to pool: %s", value.c_str());
@@ -2712,8 +2673,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
             {
                 // Headroom override
                 pureDynamic = false;
-                transformReference(value);
-                const string &profileName = parseObjectNameFromReference(value);
+                const string &profileName = value;
                 if (profileName.empty())
                 {
                     SWSS_LOG_ERROR("BUFFER_PG: Invalid format of reference to profile: %s", value.c_str());
@@ -2836,9 +2796,8 @@ task_process_status BufferMgrDynamic::checkBufferProfileDirection(const string &
 {
     // Fetch profile and check whether it's an egress profile
     vector<string> profileRefList = tokenize(profiles, ',');
-    for (auto &profileRef : profileRefList)
+    for (auto &profileName : profileRefList)
     {
-        auto const &profileName = parseObjectNameFromReference(profileRef);
         auto profileSearchRef = m_bufferProfileLookup.find(profileName);
         if (profileSearchRef == m_bufferProfileLookup.end())
         {
@@ -2879,11 +2838,10 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
             // Transform the separator in values from "|" to ":"
             if (fvField(i) == buffer_profile_field_name)
             {
-                transformReference(fvValue(i));
                 auto rc = checkBufferProfileDirection(fvValue(i), BUFFER_EGRESS);
                 if (rc != task_process_status::task_success)
                     return rc;
-                portQueue.running_profile_name = parseObjectNameFromReference(fvValue(i));
+                portQueue.running_profile_name = fvValue(i);
                 SWSS_LOG_NOTICE("Queue %s has been configured on the system, referencing profile %s", key.c_str(), fvValue(i).c_str());
             }
             else
@@ -2946,7 +2904,6 @@ task_process_status BufferMgrDynamic::handleSingleBufferPortProfileListEntry(con
         {
             if (fvField(i) == buffer_profile_list_field_name)
             {
-                transformReference(fvValue(i));
                 auto rc = checkBufferProfileDirection(fvValue(i), dir);
                 if (rc != task_process_status::task_success)
                     return rc;

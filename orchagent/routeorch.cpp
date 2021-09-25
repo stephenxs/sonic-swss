@@ -338,6 +338,9 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
         vector<sai_attribute_t> nhgm_attrs;
         sai_attribute_t nhgm_attr;
 
+        /* get updated nhkey with possible weight */
+        auto nhkey = nhopgroup->first.getNextHops().find(nexthop);
+
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
         nhgm_attr.value.oid = nhopgroup->second.next_hop_group_id;
         nhgm_attrs.push_back(nhgm_attr);
@@ -345,6 +348,13 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
         nhgm_attr.value.oid = m_neighOrch->getNextHopId(nexthop);
         nhgm_attrs.push_back(nhgm_attr);
+
+        if (nhkey->weight)
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+            nhgm_attr.value.s32 = nhkey->weight;
+            nhgm_attrs.push_back(nhgm_attr);
+        }
 
         status = sai_next_hop_group_api->create_next_hop_group_member(&nexthop_id, gSwitchId,
                                                                       (uint32_t)nhgm_attrs.size(),
@@ -544,6 +554,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 string mpls_nhs;
                 string vni_labels;
                 string remote_macs;
+                string weights;
                 bool& excp_intfs_flag = ctx.excp_intfs_flag;
                 bool overlay_nh = false;
                 bool blackhole = false;
@@ -569,6 +580,9 @@ void RouteOrch::doTask(Consumer& consumer)
 
                     if (fvField(i) == "blackhole")
                         blackhole = fvValue(i) == "true";
+
+                    if (fvField(i) == "weight")
+                        weights = fvValue(i);
                 }
 
                 vector<string> ipv = tokenize(ips, ',');
@@ -657,7 +671,7 @@ void RouteOrch::doTask(Consumer& consumer)
                         nhg_str += ipv[i] + NH_DELIMITER + alsv[i];
                     }
 
-                    nhg = NextHopGroupKey(nhg_str);
+                    nhg = NextHopGroupKey(nhg_str, weights);
 
                 }
                 else
@@ -1125,6 +1139,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     for (size_t i = 0; i < npid_count; i++)
     {
         auto nhid = next_hop_ids[i];
+        auto weight = nhopgroup_members_set[nhid].weight;
 
         // Create a next hop group member
         vector<sai_attribute_t> nhgm_attrs;
@@ -1137,6 +1152,13 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
         nhgm_attr.value.oid = nhid;
         nhgm_attrs.push_back(nhgm_attr);
+
+        if (weight)
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+            nhgm_attr.value.s32 = weight;
+            nhgm_attrs.push_back(nhgm_attr);
+        }
 
         gNextHopGroupMemberBulker.create_entry(&nhgm_ids[i],
                                                  (uint32_t)nhgm_attrs.size(),
@@ -1389,7 +1411,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     bool overlay_nh = false;
     bool status = false;
     bool curNhgIsFineGrained = false;
-    bool prevNhgWasFineGrained = false;
+    bool isFineGrainedNextHopIdChanged = false;
     bool blackhole = false;
 
     if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end())
@@ -1412,9 +1434,9 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         /* We get 3 return values from setFgNhg:
          * 1. success/failure: on addition/modification of nexthop group/members
          * 2. next_hop_id: passed as a param to fn, used for sai route creation
-         * 3. prevNhgWasFineGrained: passed as a param to fn, used to determine transitions 
+         * 3. isFineGrainedNextHopIdChanged: passed as a param to fn, used to determine transitions
          * between regular and FG ECMP, this is an optimization to prevent multiple lookups */
-        if (!m_fgNhgOrch->setFgNhg(vrf_id, ipPrefix, nextHops, next_hop_id, prevNhgWasFineGrained))
+        if (!m_fgNhgOrch->setFgNhg(vrf_id, ipPrefix, nextHops, next_hop_id, isFineGrainedNextHopIdChanged))
         {
             return false;
         }
@@ -1605,7 +1627,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
         }
 
-        if (curNhgIsFineGrained && prevNhgWasFineGrained)
+        if (curNhgIsFineGrained && !isFineGrainedNextHopIdChanged)
         {
             /* Don't change route entry if the route is previously fine grained and new nhg is also fine grained. 
              * We already modifed sai nhg objs as part of setFgNhg to account for nhg change. */
