@@ -112,7 +112,7 @@ local function iterate_profile_list(all_items)
             -- It occupies buffers in BUFFER_PG but not in BUFFER_PORT_INGRESS_PROFILE_LIST
             -- To distinguish both cases, a new name "ingress_lossy_profile_list" is introduced to indicate
             -- the profile is used by the profile list where its size should be zero.
-            profile_name = string.sub(profile_name, 2, -2)
+            profile_name = 'BUFFER_PROFILE_TABLE:' .. profile_name
             if profile_name == 'BUFFER_PROFILE_TABLE:ingress_lossy_profile' then
                 profile_name = profile_name .. '_list'
                 if profiles[profile_name] == nil then
