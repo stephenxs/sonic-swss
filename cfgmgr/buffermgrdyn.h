@@ -265,8 +265,7 @@ private:
     {
         return !value.empty() && value != "0";
     }
-    std::vector<std::string> generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId);
-    void clearIdsFromMap(const std::string &key, unsigned long &idsMap);
+    std::string getMaxSpeedFromList(std::string speedList);
     std::string &fetchZeroProfileFromNormalProfile(const std::string &profile);
 
     // APPL_DB table operations
@@ -288,8 +287,8 @@ private:
     void removeSupportedButNotConfiguredItemsOnPort(port_info_t &portInfo, const std::string &port);
     void applyNormalBufferObjectsOnPort(const std::string &port);
     void handlePendingBufferObjects();
-    void handleSetSingleBufferObjectOnAdminDonwPort(buffer_direction_t direction, const std::string &port, const std::string &key, const std::string &profile);
-    void handleDelSingleBufferObjectOnAdminDonwPort(buffer_direction_t direction, const std::string &port, const std::string &key, port_info_t &portInfo);
+    void handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, const std::string &profile);
+    void handleDelSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, port_info_t &portInfo);
 
     // Main flows
     template<class T> task_process_status reclaimReservedBufferForPort(const std::string &port, T &obj, buffer_direction_t dir);
