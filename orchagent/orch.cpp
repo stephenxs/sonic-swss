@@ -600,7 +600,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
             {
                 if (!parseReference(type_maps, list_items[ind], ref_type_name, object_name))
                 {
-                    SWSS_LOG_ERROR("Failed to parse profile reference:%s\n", list_items[ind].c_str());
+                    SWSS_LOG_NOTICE("Failed to parse profile reference:%s\n", list_items[ind].c_str());
                     return ref_resolve_status::not_resolved;
                 }
                 sai_object_id_t sai_obj = (*(type_maps[ref_type_name]))[object_name].m_saiObjectId;
