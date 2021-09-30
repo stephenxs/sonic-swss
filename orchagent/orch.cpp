@@ -670,6 +670,96 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
     return true;
 }
 
+/*
+ * generateBitMapFromIdsStr
+ *
+ * Generates the bit map representing the idsMap in string
+ * Args:
+ *      idsStr: The string representing the IDs.
+ *              Typically it's part of a key of BUFFER_QUEUE or BUFFER_PG, like "3-4" from "Ethernet0|3-4"
+ * Return:
+ *      idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ *
+ * Example:
+ *      Input idsMap: 3-4
+ *      Return: 00001100b
+ */
+unsigned long Orch::generateBitMapFromIdsStr(const string &idsStr)
+{
+    sai_uint32_t lowerBound, upperBound;
+    unsigned long idsMap = 0;
+
+    if (!parseIndexRange(idsStr, lowerBound, upperBound))
+        return 0;
+
+    for (sai_uint32_t id = lowerBound; id <= upperBound; id ++)
+    {
+        idsMap |= (1 << id);
+    }
+
+    return idsMap;
+}
+
+/*
+ * generateIdListFromMap
+ *
+ * Parse the idsMap and generate a vector which contains slices representing bits in idsMap
+ * Args:
+ *     idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ *     maxId: The maximum value of ID.
+ * Return:
+ *     A vector which contains slices representing bits in idsMap
+ *
+ * Example:
+ *     Input idsMap: 00100110b, maxId: 8
+ *     Return vector: ["1-2", "5"]
+ */
+vector<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId)
+{
+    long currentIdMask = 1;
+    bool started = false, needGenerateMap = false;
+    sai_uint32_t lower, upper;
+    vector<string> extraIdsToReclaim;
+    for (sai_uint32_t id = 0; id <= maxId; id ++)
+    {
+        // currentIdMask represents the bit mask corresponding to id: (1<<id)
+        if (idsMap & currentIdMask)
+        {
+            if (!started)
+            {
+                started = true;
+                lower = id;
+            }
+        }
+        else
+        {
+            if (started)
+            {
+                started = false;
+                upper = id - 1;
+                needGenerateMap = true;
+            }
+        }
+
+        if (needGenerateMap)
+        {
+            if (lower != upper)
+            {
+                extraIdsToReclaim.emplace_back(to_string(lower) + "-" + to_string(upper));
+            }
+            else
+            {
+                extraIdsToReclaim.emplace_back(to_string(lower));
+            }
+            needGenerateMap = false;
+        }
+
+        currentIdMask <<= 1;
+    }
+
+    return extraIdsToReclaim;
+}
+
 void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)

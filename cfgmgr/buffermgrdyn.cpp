@@ -1177,92 +1177,6 @@ void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
     }
 }
 
-/*
- * clearIdsFromMap
- *
- * Clear the IDs represented by key from idsMap
- * Args:
- *      key: The key of BUFFER_QUEUE or BUFFER_PG, like Ethernet0|3-4
- *      idsMap: The bitmap of IDs. The LSB stands for ID 0.
- * Return:
- *      None
- *
- * Example:
- *      Input idsMap: 00111110b, key: Ethernet0|3-4
- *      The bits 3-4 will be cleared
- *      Output idsMap: 00100110b
- */
-void BufferMgrDynamic::clearIdsFromMap(const string &key, unsigned long &idsMap)
-{
-    auto const &itemsMap = parseObjectNameFromKey(key, 1);
-    sai_uint32_t lowerBound, upperBound;
-    parseIndexRange(itemsMap, lowerBound, upperBound);
-    for (sai_uint32_t id = lowerBound; id <= upperBound; id ++)
-    {
-        idsMap ^= (1 << id);
-    }
-}
-
-/*
- * generateSupportedButNotConfiguredItemsMap
- *
- * Parse the idsMap and generate a vector which contains slices representing bits in idsMap
- * Args:
- *     idsMap: The bitmap of IDs. The LSB stands for ID 0.
- *     maxId: The maximum value of ID.
- * Return:
- *     A vector which contains slices representing bits in idsMap
- *
- * Example:
- *     Input idsMap: 00100110b, maxId: 8
- *     Return vector: ["1-2", "5"]
- */
-vector<string> BufferMgrDynamic::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId)
-{
-    long currentIdMask = 1;
-    bool started = false, needGenerateMap = false;
-    sai_uint32_t lower, upper;
-    vector<string> extraIdsToReclaim;
-    for (sai_uint32_t id = 0; id <= maxId; id ++)
-    {
-        // currentIdMask represents the bit mask corresponding to id: (1<<id)
-        if (idsMap & currentIdMask)
-        {
-            if (!started)
-            {
-                started = true;
-                lower = id;
-            }
-        }
-        else
-        {
-            if (started)
-            {
-                started = false;
-                upper = id - 1;
-                needGenerateMap = true;
-            }
-        }
-
-        if (needGenerateMap)
-        {
-            if (lower != upper)
-            {
-                extraIdsToReclaim.emplace_back(to_string(lower) + "-" + to_string(upper));
-            }
-            else
-            {
-                extraIdsToReclaim.emplace_back(to_string(lower));
-            }
-            needGenerateMap = false;
-        }
-
-        currentIdMask <<= 1;
-    }
-
-    return extraIdsToReclaim;
-}
-
 string &BufferMgrDynamic::fetchZeroProfileFromNormalProfile(const string &profile)
 {
     auto const &profileRef = m_bufferProfileLookup.find(profile);
@@ -1357,7 +1271,7 @@ template<class T> task_process_status BufferMgrDynamic::reclaimReservedBufferFor
                 updateBufferObjectToDb(key, runningProfile, false, dir);
             }
 
-            clearIdsFromMap(key, objectsMap);
+            objectsMap ^= generateBitMapFromIdsStr(parseObjectNameFromKey(key, 1));
         }
         else
         {
@@ -2575,7 +2489,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
     return task_process_status::task_success;
 }
 
-void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDonwPort(buffer_direction_t direction, const string &port, const string &key, const string &profile)
+void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const string &port, const string &key, const string &profile)
 {
     if (m_portInitDone)
     {
@@ -2618,7 +2532,7 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDonwPort(buffer_directi
     }
 }
 
-void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDonwPort(buffer_direction_t direction, const string &port, const string &key, port_info_t &portInfo)
+void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const string &port, const string &key, port_info_t &portInfo)
 {
     auto &idsToZero = m_bufferObjectIdsToZero[direction];
     auto &supportedNotConfiguredItems = portInfo.supported_but_not_configured_buffer_objects[direction];
@@ -2720,7 +2634,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
         {
             // In case the port is admin down during initialization, the PG will be removed from the port,
             // which effectively notifies bufferOrch to add the item to the m_ready_list
-            handleSetSingleBufferObjectOnAdminDonwPort(BUFFER_PG, port, key, bufferPg.configured_profile_name);
+            handleSetSingleBufferObjectOnAdminDownPort(BUFFER_PG, port, key, bufferPg.configured_profile_name);
         }
         else if (bufferPg.lossless)
         {
@@ -2763,7 +2677,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
 
         if (portInfo.state == PORT_ADMIN_DOWN)
         {
-            handleDelSingleBufferObjectOnAdminDonwPort(BUFFER_PG, port, key, portInfo);
+            handleDelSingleBufferObjectOnAdminDownPort(BUFFER_PG, port, key, portInfo);
         }
         else if (bufferPg.lossless)
         {
@@ -2857,7 +2771,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
 
         if (PORT_ADMIN_DOWN == portInfo.state)
         {
-            handleSetSingleBufferObjectOnAdminDonwPort(BUFFER_QUEUE, port, key, portQueue.running_profile_name);
+            handleSetSingleBufferObjectOnAdminDownPort(BUFFER_QUEUE, port, key, portQueue.running_profile_name);
         }
         else
         {
@@ -2875,7 +2789,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
         m_portQueueLookup[port].erase(queues);
         if (PORT_ADMIN_DOWN == portInfo.state)
         {
-            handleDelSingleBufferObjectOnAdminDonwPort(BUFFER_QUEUE, port, key, portInfo);
+            handleDelSingleBufferObjectOnAdminDownPort(BUFFER_QUEUE, port, key, portInfo);
         }
         else
         {
