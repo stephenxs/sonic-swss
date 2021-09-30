@@ -177,3 +177,16 @@ bool FlexCounterOrch::getPortBufferDropCountersState() const
 {
     return m_port_buffer_drop_counter_enabled;
 }
+
+bool FlexCounterOrch::bake()
+{
+    /*
+     * bake is called during warmreboot reconciling procedure.
+     * By default, it should fetch items from the tables the sub agents listen to,
+     * and then push them into m_toSync of each sub agent.
+     * The motivation is to make sub agents handle the saved entries first and then handle the upcoming entries.
+     */
+
+    SWSS_LOG_NOTICE("FlexCounterOrch: Do not handle any FLEX_COUNTER table update during reconciling");
+    return true;
+}

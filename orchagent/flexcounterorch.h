@@ -17,6 +17,7 @@ public:
     virtual ~FlexCounterOrch(void);
     bool getPortCountersState() const;
     bool getPortBufferDropCountersState() const;
+    bool bake() override;
  
 private:
     std::shared_ptr<swss::DBConnector> m_flexCounterDb = nullptr;
