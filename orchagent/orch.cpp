@@ -714,12 +714,12 @@ unsigned long Orch::generateBitMapFromIdsStr(const string &idsStr)
  *     Input idsMap: 00100110b, maxId: 8
  *     Return vector: ["1-2", "5"]
  */
-vector<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId)
+set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId)
 {
-    long currentIdMask = 1;
+    unsigned long currentIdMask = 1;
     bool started = false, needGenerateMap = false;
     sai_uint32_t lower, upper;
-    vector<string> extraIdsToReclaim;
+    set<string> extraIdsToReclaim;
     for (sai_uint32_t id = 0; id <= maxId; id ++)
     {
         // currentIdMask represents the bit mask corresponding to id: (1<<id)
@@ -745,11 +745,11 @@ vector<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t ma
         {
             if (lower != upper)
             {
-                extraIdsToReclaim.emplace_back(to_string(lower) + "-" + to_string(upper));
+                extraIdsToReclaim.insert(to_string(lower) + "-" + to_string(upper));
             }
             else
             {
-                extraIdsToReclaim.emplace_back(to_string(lower));
+                extraIdsToReclaim.insert(to_string(lower));
             }
             needGenerateMap = false;
         }
@@ -758,6 +758,48 @@ vector<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t ma
     }
 
     return extraIdsToReclaim;
+}
+
+
+/*
+ * isItemIdsMapContinuous
+ *
+ * Check whether the input idsMap is continuous.
+ * An idsMap is continuous means there is no "0"s between any two "1"s in the map.
+ * Args:
+ *     idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ *     maxId: The maximum value of ID.
+ * Return:
+ *     Whether the idsMap is continous
+ *
+ * Example:
+ *     idsMaps like 00011100, 00001000, 00000000 are continuous
+ *     while 00110010 is not because there are 2 "0"s in bit 2, 3 surrounded by "1"s
+ */
+bool Orch::isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId)
+{
+    unsigned long currentIdMask = 1;
+    bool isCurrentBitValid = false, hasValidBits = false, hasZeroAfterValidBit = false;
+
+    for (sai_uint32_t id = 0; id < maxId; id ++)
+    {
+        isCurrentBitValid = ((idsMap & currentIdMask) != 0);
+        if (isCurrentBitValid)
+        {
+            if (!hasValidBits)
+                hasValidBits = true;
+            if (hasZeroAfterValidBit)
+                return false;
+        }
+        else
+        {
+            if (hasValidBits && !hasZeroAfterValidBit)
+                hasZeroAfterValidBit = true;
+        }
+        currentIdMask <<= 1;
+    }
+
+    return true;
 }
 
 void Orch::addConsumer(DBConnector *db, string tableName, int pri)
