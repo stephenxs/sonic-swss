@@ -114,7 +114,7 @@ typedef struct {
 
     long lane_count;
     sai_uint32_t maximum_buffer_objects[BUFFER_DIR_MAX];
-    std::vector<std::string> supported_but_not_configured_buffer_objects[BUFFER_DIR_MAX];
+    std::set<std::string> supported_but_not_configured_buffer_objects[BUFFER_DIR_MAX];
 } port_info_t;
 
 //TODO:
