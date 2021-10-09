@@ -2431,15 +2431,90 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
 
 void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const string &port, const string &key, const string &profile)
 {
-    if (m_portInitDone)
-    {
-        // If initialization finished, no extra handle required.
-        return;
-    }
-
     auto &idsToZero = m_bufferObjectIdsToZero[direction];
     auto &table = m_applBufferObjectTables[direction];
     auto const &objectName = m_bufferObjectNames[direction];
+    auto &portInfo = m_portInfoLookup[port];
+
+    if (m_portInitDone)
+    {
+        if (idsToZero.empty())
+        {
+            // If initialization finished, no extra handle required.
+            // Check whether the key overlaps with supported but not configured map
+            auto const &idsToAdd = parseObjectNameFromKey(key, 1);
+            auto idsToAddBitmap = generateBitMapFromIdsStr(idsToAdd);
+            auto &supportedButNotConfiguredItems = portInfo.supported_but_not_configured_buffer_objects[direction];
+            unsigned long overlappedUnconfiguredIdsMap = 0;
+            string overlappedUnconfiguredIdsStr;
+            const string &portPrefix = port + delimiter;
+            for (auto const &ids : supportedButNotConfiguredItems)
+            {
+                /*
+                 * An exmaple to explain the logic
+                 * Item no                                     01234567
+                 * Supported but not
+                 * configured items:                           -**-****
+                 * Items to be added:                          -----**-
+                 * Slice to be removed
+                 * in the next iternation:                     ----****
+                 * Legend: *: valid -: empty
+                 * Currently, supported but not configured items: 1-2, 4-7
+                 * Items to be added: 5-6
+                 * It will result in
+                 * - items 4-7 to be removed from APPL_DB
+                 * - items 4, 5-6, 7 to be added to APPL_DB
+                 */
+                auto idsBitmap = generateBitMapFromIdsStr(ids);
+                if ((idsToAddBitmap & idsBitmap) == idsToAddBitmap)
+                {
+                    // Ids to add overlaps with this slice of unconfigured IDs
+                    // Remove the slice and regenerate them
+                    // It should be slice 4-7 in the above example
+                    auto const &keyToRemove = portPrefix + ids;
+                    SWSS_LOG_INFO("Buffer %s %s overlapped with existing zero item %s, remove the latter first",
+                                  objectName.c_str(), key.c_str(), keyToRemove.c_str());
+                    table.del(keyToRemove);
+                    overlappedUnconfiguredIdsMap = (idsBitmap ^ idsToAddBitmap);
+                    overlappedUnconfiguredIdsStr = ids;
+                    break;
+                }
+                /*
+                 * Result after iteration:
+                 * overlappedUnconfiguredIdsMap: ----*--* (Items to be added has been removed from this map)
+                 * overlappedUnconfiguredIdsStr: ----****
+                 */
+            }
+            // Regenerate unconfigured IDs
+            supportedButNotConfiguredItems.erase(overlappedUnconfiguredIdsStr);
+            auto const &splitIds = generateIdListFromMap(overlappedUnconfiguredIdsMap, portInfo.maximum_buffer_objects[direction]);
+            /*
+             * Slices returned: ----*--*
+             * Readd zero profiles for each slice in the set
+             */
+            for (auto const &splitId : splitIds)
+            {
+                auto const &keyToAdd = portPrefix + splitId;
+                updateBufferObjectToDb(keyToAdd, m_bufferZeroProfileName[direction], true, direction);
+                supportedButNotConfiguredItems.insert(splitId);
+                SWSS_LOG_INFO("Add %s zero item %s", objectName.c_str(), keyToAdd.c_str());
+            }
+
+            auto const &zeroProfile = fetchZeroProfileFromNormalProfile(profile);
+            if (!zeroProfile.empty())
+            {
+                updateBufferObjectToDb(key, zeroProfile, true, direction);
+                SWSS_LOG_INFO("Add configured %s item %s as zero profile", objectName.c_str(), key.c_str());
+            }
+            else
+            {
+                updateBufferObjectToDb(key, zeroProfile, true, direction);
+                SWSS_LOG_INFO("No zero profile defined for %s, reclaiming buffer by removing buffer %s %s",
+                              profile.c_str(), objectName.c_str(), key.c_str());
+            }
+        }
+        return;
+    }
 
     if (!idsToZero.empty())
     {
@@ -2476,6 +2551,7 @@ void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDownPort(buffer_directi
 {
     auto &idsToZero = m_bufferObjectIdsToZero[direction];
     auto &supportedNotConfiguredItems = portInfo.supported_but_not_configured_buffer_objects[direction];
+    auto const &objectName = m_bufferObjectNames[direction];
 
     if (idsToZero.empty())
     {
@@ -2483,8 +2559,55 @@ void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDownPort(buffer_directi
         // do NOT remove it otherwise SDK default value will be set for the items
         // Move the key to supported_but_not_configured_items so that the slice of items
         // can be removed when the port is started up
-        auto const &ids = parseObjectNameFromKey(key, 1);
-        supportedNotConfiguredItems.emplace_back(ids);
+        auto const &idsToDelStr = parseObjectNameFromKey(key, 1);
+        auto const &keyPrefix = port + delimiter;
+        auto idsToDelMap = generateBitMapFromIdsStr(idsToDelStr);
+        // If this item can be combined with any existing items, let's do.
+        // adjancentItemsSet will hold all adjancent slices.
+        // Otherwise, just add it to the list.
+        set<string> adjancentItemsSet;
+        for (auto const &idStr : supportedNotConfiguredItems)
+        {
+            unsigned long idsMap = generateBitMapFromIdsStr(idStr);
+            // Make sure there is no overlap
+            if ((idsMap & idsToDelMap) == 0)
+            {
+                if (isItemIdsMapContinuous(idsMap|idsToDelMap, portInfo.maximum_buffer_objects[direction]))
+                {
+                    SWSS_LOG_INFO("Removing buffer %s item %s, found adjancent item %s, remove the later first",
+                                  objectName.c_str(), key.c_str(), idStr.c_str());
+                    adjancentItemsSet.insert(idStr);
+                    updateBufferObjectToDb(keyPrefix + idStr, "", false, direction);
+                    idsToDelMap |= idsMap;
+                }
+            }
+        }
+
+        if (!adjancentItemsSet.empty())
+        {
+            SWSS_LOG_INFO("Removing buffer %s item %s from APPL_DB because it will be combined", objectName.c_str(), key.c_str());
+            updateBufferObjectToDb(key, "", false, direction);
+
+            for (auto const &idStr : adjancentItemsSet)
+            {
+                supportedNotConfiguredItems.erase(idStr);
+            }
+
+            auto const combinedIdsStr = generateIdListFromMap(idsToDelMap, portInfo.maximum_buffer_objects[direction]);
+            // combinedIdsStr should contain only one id string.
+            for (auto const &idStr : combinedIdsStr)
+            {
+                SWSS_LOG_INFO("Removing buffer %s item %s, got combined item %s",
+                              objectName.c_str(), key.c_str(), idStr.c_str());
+                supportedNotConfiguredItems.insert(idStr);
+                updateBufferObjectToDb(keyPrefix + idStr, m_bufferZeroProfileName[direction], true, direction);
+            }
+        }
+        else if (!m_bufferZeroProfileName[direction].empty())
+        {
+            SWSS_LOG_INFO("Removing buffer %s item %s", objectName.c_str(), key.c_str());
+            supportedNotConfiguredItems.insert(idsToDelStr);
+        }
     }
 
     // For admin down ports, if zero profiles configured on specified items only
