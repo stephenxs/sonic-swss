@@ -4,6 +4,7 @@
 #include "orch.h"
 #include "port.h"
 #include "producertable.h"
+#include "table.h"
 
 extern "C" {
 #include "sai.h"
@@ -24,6 +25,7 @@ private:
     std::shared_ptr<swss::ProducerTable> m_flexCounterGroupTable = nullptr;
     bool m_port_counter_enabled = false;
     bool m_port_buffer_drop_counter_enabled = false;
+    Table m_flexCounterConfigTable;
 };
 
 #endif

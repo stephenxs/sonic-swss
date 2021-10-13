@@ -1,5 +1,4 @@
 #include <unordered_map>
-#include "flexcounterorch.h"
 #include "portsorch.h"
 #include "fabricportsorch.h"
 #include "select.h"
@@ -43,6 +42,7 @@ unordered_map<string, string> flexCounterGroupMap =
 
 FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
+    m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE))
 {
@@ -187,6 +187,35 @@ bool FlexCounterOrch::bake()
      * The motivation is to make sub agents handle the saved entries first and then handle the upcoming entries.
      */
 
-    SWSS_LOG_NOTICE("FlexCounterOrch: Do not handle any FLEX_COUNTER table update during reconciling");
-    return true;
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    vector<string> keys;
+    m_flexCounterConfigTable.getKeys(keys);
+    for (const auto &key: keys)
+    {
+        if (!flexCounterGroupMap.count(key))
+        {
+            SWSS_LOG_NOTICE("FlexCounterOrch: Invalid flex counter group intput %s is skipped during reconciling", key.c_str());
+            continue;
+        }
+
+        if (key == BUFFER_POOL_WATERMARK_KEY)
+        {
+            SWSS_LOG_NOTICE("FlexCounterOrch: Do not handle any FLEX_COUNTER table for %s update during reconciling",
+                            BUFFER_POOL_WATERMARK_KEY);
+            continue;
+        }
+
+        KeyOpFieldsValuesTuple kco;
+
+        kfvKey(kco) = key;
+        kfvOp(kco) = SET_COMMAND;
+
+        if (!m_flexCounterConfigTable.get(key, kfvFieldsValues(kco)))
+        {
+            continue;
+        }
+        entries.push_back(kco);
+    }
+    Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
+    return consumer->addToSync(entries);
 }
