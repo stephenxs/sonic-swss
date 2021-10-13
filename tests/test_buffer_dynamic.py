@@ -153,7 +153,6 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "{}:3-4".format("Ethernet0"), {"profile": "egress_lossless_profile"})
         self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "{}:5-6".format("Ethernet0"), {"profile": "egress_lossy_profile"})
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_changeSpeed(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -206,7 +205,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_changeCableLen(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -257,7 +255,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_MultipleLosslessPg(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -305,7 +302,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_headroomOverride(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -389,7 +385,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_mtuUpdate(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -424,7 +419,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_nonDefaultAlpha(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -467,7 +461,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_sharedHeadroomPool(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -566,7 +559,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_shutdownPort(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -627,7 +619,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd("config interface shutdown Ethernet0")
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_autoNegPort(self, dvs, testlog):
         self.setup_db(dvs)
 
