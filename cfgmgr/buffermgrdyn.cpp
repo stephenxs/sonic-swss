@@ -616,15 +616,23 @@ void BufferMgrDynamic::recalculateSharedBufferPool()
             // In case all buffer pools have a configured size,
             // The m_bufferPoolReady will be set to true
             // It can happen on vs.
-            bool hasDynamicSizePool = false;
+            bool hasDynamicSizePool = false, hasBufferPool = false;
             for (auto &poolRef : m_bufferPoolLookup)
             {
+                hasBufferPool = true;
                 if (poolRef.second.dynamic_size)
                 {
                     hasDynamicSizePool = true;
                 }
             }
-            if (!hasDynamicSizePool)
+
+            if (!hasBufferPool)
+            {
+                SWSS_LOG_INFO("No shared buffer pool configured, skip calculating shared buffer pool size");
+                return;
+            }
+
+            if (hasBufferPool && !hasDynamicSizePool)
             {
                 m_bufferPoolReady = true;
                 SWSS_LOG_NOTICE("No pool requires calculating size dynamically. All buffer pools are ready");
