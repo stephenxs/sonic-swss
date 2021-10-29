@@ -1231,6 +1231,23 @@ string &BufferMgrDynamic::fetchZeroProfileFromNormalProfile(const string &profil
 
     return poolInfo.zero_profile_name;
 }
+
+bool BufferMgrDynamic::isReadyToReclaimBufferOnPort(const string &port)
+{
+    auto &portInfo = m_portInfoLookup[port];
+
+    for (auto dir : m_bufferDirections)
+    {
+        if (m_bufferObjectIdsToZero[dir].empty() && 0 == portInfo.maximum_buffer_objects[dir])
+        {
+            SWSS_LOG_NOTICE("Maximum supported priority groups and queues have not been populated in STATE_DB for port %s, reclaiming reserved buffer deferred", port.c_str());
+            return false;
+        }
+    }
+
+    return true;
+}
+
 /*
  * reclaimReservedBufferForPort
  * Called when a port is admin down
@@ -2228,9 +2245,10 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
             }
             else
             {
-                if (task_process_status::task_success == reclaimReservedBufferForPort(port, m_portPgLookup, BUFFER_PG)
-                    && task_process_status::task_success == reclaimReservedBufferForPort(port, m_portQueueLookup, BUFFER_QUEUE))
+                if (isReadyToReclaimBufferOnPort(port))
                 {
+                    reclaimReservedBufferForPort(port, m_portPgLookup, BUFFER_PG);
+                    reclaimReservedBufferForPort(port, m_portQueueLookup, BUFFER_QUEUE);
                     checkSharedBufferPoolSize();
                 }
                 else
@@ -3270,14 +3288,15 @@ void BufferMgrDynamic::handlePendingBufferObjects()
             set<string> portsNeedRetry;
             for ( auto &port : m_pendingApplyZeroProfilePorts)
             {
-                if (task_process_status::task_success == reclaimReservedBufferForPort(port, m_portPgLookup, BUFFER_PG)
-                    && task_process_status::task_success == reclaimReservedBufferForPort(port, m_portQueueLookup, BUFFER_QUEUE))
+                if (isReadyToReclaimBufferOnPort(port))
                 {
+                    reclaimReservedBufferForPort(port, m_portPgLookup, BUFFER_PG);
+                    reclaimReservedBufferForPort(port, m_portQueueLookup, BUFFER_QUEUE);
                     SWSS_LOG_NOTICE("Admin-down port %s is handled after buffer pools have been configured", port.c_str());
                 }
                 else
                 {
-                    SWSS_LOG_NOTICE("Admin-down port %s is still failing after buffer pools have been configured, need retry", port.c_str());
+                    SWSS_LOG_NOTICE("Admin-down port %s is still not ready to reclaim after buffer pools have been configured, need retry", port.c_str());
                     portsNeedRetry.insert(port);
                 }
             }
