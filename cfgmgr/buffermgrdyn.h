@@ -294,6 +294,7 @@ private:
     void handlePendingBufferObjects();
     void handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, const std::string &profile);
     void handleDelSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, port_info_t &portInfo);
+    bool isReadyToReclaimBufferOnPort(const std::string &port);
 
     // Main flows
     template<class T> task_process_status reclaimReservedBufferForPort(const std::string &port, T &obj, buffer_direction_t dir);
