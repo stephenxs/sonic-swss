@@ -3259,24 +3259,21 @@ void BufferMgrDynamic::handlePendingBufferObjects()
                     //    They should be in m_pendingApplyZeroProfilePorts and will be handled later in this function
                     // 2. Otherwise, they should have been handled and zero profiles have been applied.
                     refreshPgsForPort(port.first, port.second.effective_speed, port.second.cable_length, port.second.mtu);
-                }
-            }
 
-            // Apply all pending buffer queues
-            for (auto &port : m_portQueueLookup)
-            {
-                for (auto &queue : port.second)
-                {
-                    updateBufferObjectToDb(queue.first, queue.second.running_profile_name, true, BUFFER_QUEUE);
-                }
-            }
+                    // Apply pending buffer queues
+                    auto &queues = m_portQueueLookup[port.first];
+                    for (auto &queue : queues)
+                    {
+                        updateBufferObjectToDb(queue.first, queue.second.running_profile_name, true, BUFFER_QUEUE);
+                    }
 
-            // Apply all pending buffer profile lists
-            for (auto dir : m_bufferDirections)
-            {
-                for (auto &profileList : m_portProfileListLookups[dir])
-                {
-                    updateBufferObjectListToDb(profileList.first, profileList.second, dir);
+                    // Apply all pending buffer profile lists
+                    for (auto dir : m_bufferDirections)
+                    {
+                        auto &profileList = m_portProfileListLookups[dir][port.first];
+                        if (!profileList.empty())
+                            updateBufferObjectListToDb(port.first, profileList, dir);
+                    }
                 }
             }
 
