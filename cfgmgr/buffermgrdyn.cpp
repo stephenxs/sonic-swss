@@ -1379,10 +1379,10 @@ template<class T> task_process_status BufferMgrDynamic::reclaimReservedBufferFor
     vector<FieldValueTuple> fvVector;
 
     SWSS_LOG_NOTICE("Reclaiming buffer reserved for ingress profile list from port %s", port.c_str());
-    const auto &profileListRef = m_portProfileListLookups[dir].find(port);
-    if (profileListRef != m_portProfileListLookups[dir].end())
+    const auto &profileList = m_portProfileListLookups[dir][port];
+    if (!profileList.empty())
     {
-        const string &zeroIngressProfileNameList = constructZeroProfileListFromNormalProfileList(profileListRef->second, port);
+        const string &zeroIngressProfileNameList = constructZeroProfileListFromNormalProfileList(profileList, port);
         fvVector.emplace_back(buffer_profile_list_field_name, zeroIngressProfileNameList);
         m_applBufferProfileListTables[dir].set(port, fvVector);
     }
