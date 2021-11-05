@@ -1220,17 +1220,14 @@ bool BufferMgrDynamic::isReadyToReclaimBufferOnPort(const string &port)
  * Return:
  *  - task_process_status
  *
- * Flow:
- * 1. Reclaim all the priority groups of the port from APPL_DB
+ * Purpose:
+ * 1. Reclaim all the priority groups and queues of the port from APPL_DB
  * 2. Remove all the buffer profiles that are dynamically calculated and no longer referenced
- * 3. Reclaim all the queues of the port from APPL_DB
- * 4. Reclaim the ingress/egress profile list of the port form APPL_DB
+ * 3. Reclaim the ingress/egress profile list of the port form APPL_DB
  *
  * The flow:
  * 1. Load the zero pools and profiles into APPL_DB if they have been provided but not loaded.
- * 2. Skip the whole function if maximum numbers of priority groups or queues have not been populated to STATE_DB.
- *    In this case, the reclaiming will be deferred.
- * 3. Handle priority group, and queues:
+ * 2. Handle priority group, and queues:
  *    Two modes for them to be reclaimed:
  *    - Apply zero buffer profiles on all configured and supported-but-not-configured items.
  *      Eg.
@@ -1243,7 +1240,7 @@ bool BufferMgrDynamic::isReadyToReclaimBufferOnPort(const string &port)
  *      - 8 PGs supported, 0 is configured as lossy and 3-4 are configured as lossless
  *      - PGs to be applied zero profile on is 0, 3-4 will be removed
  *    Queues and priority groups share the common logic.
- * 4. Handle ingress and egress buffer profile list, which shared the common logic:
+ * 3. Handle ingress and egress buffer profile list, which shared the common logic:
  *    - Construct the zero buffer profile list from the normal buffer profile list.
  *    - Apply the zero buffer profile list on the port.
  */
@@ -1261,12 +1258,6 @@ template<class T> task_process_status BufferMgrDynamic::reclaimReservedBufferFor
     }
 
     bool applyZeroProfileOnSpecifiedObjects = !m_bufferObjectIdsToZero[dir].empty();
-
-    if (!applyZeroProfileOnSpecifiedObjects && 0 == portInfo.maximum_buffer_objects[dir])
-    {
-        SWSS_LOG_NOTICE("Maximum supported priority groups and queues have not been populated in STATE_DB for port %s, reclaiming reserved buffer deferred", port.c_str());
-        return task_process_status::task_need_retry;
-    }
 
     SWSS_LOG_NOTICE("Reclaiming buffer reserved for all %s(s) from port %s", objectTypeName.c_str(), port.c_str());
 
