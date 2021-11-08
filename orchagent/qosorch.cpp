@@ -1754,6 +1754,7 @@ void QosOrch::doTask()
 void QosOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+    int count = 0;
 
     if (!gPortsOrch->allPortsReady())
     {
@@ -1773,6 +1774,7 @@ void QosOrch::doTask(Consumer &consumer)
         }
 
         auto task_status = (this->*(m_qos_handler_map[qos_map_type_name]))(consumer);
+        count++;
         switch(task_status)
         {
             case task_process_status::task_success :
@@ -1795,6 +1797,8 @@ void QosOrch::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 break;
         }
+        if (count > 100)
+            return;
     }
 
     m_qosMapBulker.flush();

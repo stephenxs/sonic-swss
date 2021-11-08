@@ -456,6 +456,7 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
 
 void RouteOrch::doTask(Consumer& consumer)
 {
+    int counter = 0;
     SWSS_LOG_ENTER();
 
     if (!gPortsOrch->allPortsReady())
@@ -982,6 +983,10 @@ void RouteOrch::doTask(Consumer& consumer)
                 removeNextHopGroup(it_nhg.first);
             }
         }
+
+        counter++;
+        if (counter > 4)
+            return;
     }
 }
 
