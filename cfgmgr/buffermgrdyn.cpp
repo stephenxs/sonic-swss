@@ -48,7 +48,8 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_applPortTable(applDb, APP_PORT_TABLE_NAME),
         m_portInitDone(false),
         m_bufferPoolReady(false),
-        m_bufferObjectsPending(false),
+        m_bufferObjectsPending(true),
+        m_bufferCompletelyInitialized(false),
         m_mmuSizeNumber(0)
 {
     SWSS_LOG_ENTER();
@@ -118,6 +119,23 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     if (!keys.empty())
     {
         m_cfgDefaultLosslessBufferParam.hget(keys[0], "default_dynamic_th", m_defaultThreshold);
+    }
+
+    // m_waitApplyAdditionalZeroProfiles represents for how long applying additional zero profiles will be deferred
+    // after normal profiles and profiles for configured items have been applied
+    // For warm reboot, it is not deferred as the additional zero profiles have been in the APPL_DB
+    // In this case, they should be replayed as soon as possible
+    // For fast/cold reboot and other initialization flow, it is defered for 30 seconds.
+    // This is to accelerate the fast reboot converging time.
+    if (WarmStart::isWarmStart())
+    {
+        m_waitApplyAdditionalZeroProfiles = 0;
+        WarmStart::setWarmStartState("buffermgrd", WarmStart::INITIALIZED);
+    }
+    else
+    {
+        m_waitApplyAdditionalZeroProfiles = 3;
+        WarmStart::setWarmStartState("buffermgrd", WarmStart::WSDISABLED);
     }
 }
 
@@ -1361,9 +1379,16 @@ template<class T> task_process_status BufferMgrDynamic::reclaimReservedBufferFor
     {
         // Apply zero profiles on supported-but-not-configured buffer objects
         portInfo.supported_but_not_configured_buffer_objects[dir] = generateIdListFromMap(objectsMap, portInfo.maximum_buffer_objects[dir]);
-        for(auto &it: portInfo.supported_but_not_configured_buffer_objects[dir])
+        if (m_waitApplyAdditionalZeroProfiles == 0)
         {
-            updateBufferObjectToDb(portKeyPrefix + it, m_bufferZeroProfileName[dir], true, dir);
+            for(auto &it: portInfo.supported_but_not_configured_buffer_objects[dir])
+            {
+                updateBufferObjectToDb(portKeyPrefix + it, m_bufferZeroProfileName[dir], true, dir);
+            }
+        }
+        else
+        {
+            m_pendingSupportedButNotConfiguredPorts[dir].insert(port);
         }
     }
 
@@ -3220,6 +3245,9 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
  *    (but not applied to APPL_DB until the buffer pools are ready, AKA. m_bufferPoolReady == true)
  *  - Once buffer pools are ready, all stored buffer profiles and objects will be applied to APPL_DB by this function.
  *
+ * Applying additional zero profiles, which is supported but not configured profiles, if any, will be deferred in non-warmreboot.
+ * This is to accelerate the start flow especially for fast reboot.
+ *
  * The progress of pushing buffer pools into APPL_DB has also been accelerated by the lua plugin for calculating buffer sizes.
  * Originally, if the data are not available for calculating buffer sizes, it just return an empty vectors and buffer manager will retry
  * Now, the lua plugin will return the sizes calculated by the following logic:
@@ -3282,6 +3310,8 @@ void BufferMgrDynamic::handlePendingBufferObjects()
 
         if (!m_pendingApplyZeroProfilePorts.empty())
         {
+            // m_pendingApplyZeroProfilePorts contains all the admin down ports
+            // We do NOT iterate all admin down ports but the set containing ports need to be applied zero profiles
             set<string> portsNeedRetry;
             for ( auto &port : m_pendingApplyZeroProfilePorts)
             {
@@ -3299,11 +3329,71 @@ void BufferMgrDynamic::handlePendingBufferObjects()
             }
             m_pendingApplyZeroProfilePorts = move(portsNeedRetry);
         }
+
+        // configuredItemsDone means all buffer objects (profiles, priority groups, queues, profile lists) in the CONFIG_DB have been applied to APPL_DB
+        // - on admin up ports, normal profiles are applied
+        // - on admin down ports, zero profiles are applied
+        bool configuredItemsDone = !m_bufferObjectsPending && m_pendingApplyZeroProfilePorts.empty();
+
+        if (WarmStart::isWarmStart())
+        {
+            // For warm restart, all buffer items have been applied now
+            if (configuredItemsDone)
+            {
+                WarmStart::setWarmStartState("buffermgrd", WarmStart::REPLAYED);
+                // There is no operation to be performed for buffermgrd reconcillation
+                // Hence mark it reconciled right away
+                WarmStart::setWarmStartState("buffermgrd", WarmStart::RECONCILED);
+                m_bufferCompletelyInitialized = true;
+                SWSS_LOG_NOTICE("All bufer configuration has been applied. Buffer initialization done");
+            }
+        }
+        else
+        {
+            // For fast reboot, cold reboot and other initialization flow, the additional zero profiles will be applied
+            // 30 seconds later once normal profiles and zero profiles of configured items have been applied
+            // This is to accelerate fast reboot flow.
+            // m_waitApplyAdditionalZeroProfiles is initialized as 3 during buffer manager initialization
+            // Timer's period is 10. So total deferred time is 3*10 = 30 seconds
+            if (m_waitApplyAdditionalZeroProfiles > 0)
+            {
+                if (m_portInitDone && configuredItemsDone)
+                {
+                    SWSS_LOG_NOTICE("Additional zero profiles will be appied after %d seconds", m_waitApplyAdditionalZeroProfiles * 10);
+                    m_waitApplyAdditionalZeroProfiles --;
+                }
+            }
+            else
+            {
+                // For admin down ports, apply supported but not configured items
+                for (auto dir : m_bufferDirections)
+                {
+                    for ( auto &port : m_pendingSupportedButNotConfiguredPorts[dir])
+                    {
+                        auto &portInfo = m_portInfoLookup[port];
+                        for(auto &it: portInfo.supported_but_not_configured_buffer_objects[dir])
+                        {
+                            auto const &key = port + delimiter + it;
+                            SWSS_LOG_INFO("Applying additional zero profiles on port %s", key.c_str());
+                            updateBufferObjectToDb(key, m_bufferZeroProfileName[dir], true, dir);
+                        }
+                    }
+                    m_pendingSupportedButNotConfiguredPorts[dir].clear();
+                }
+
+                if (configuredItemsDone)
+                {
+                    m_bufferCompletelyInitialized = true;
+                    SWSS_LOG_NOTICE("All bufer configuration has been applied. Buffer initialization done");
+                }
+            }
+        }
     }
 }
 
 void BufferMgrDynamic::doTask(SelectableTimer &timer)
 {
     checkSharedBufferPoolSize(true);
-    handlePendingBufferObjects();
+    if (!m_bufferCompletelyInitialized)
+        handlePendingBufferObjects();
 }
