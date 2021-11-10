@@ -170,6 +170,7 @@ private:
     bool m_portInitDone;
     bool m_bufferPoolReady;
     bool m_bufferObjectsPending;
+    bool m_bufferCompletelyInitialized;
 
     std::string m_configuredSharedHeadroomPoolSize;
 
@@ -193,6 +194,8 @@ private:
     port_info_lookup_t m_portInfoLookup;
     std::set<std::string> m_adminDownPorts;
     std::set<std::string> m_pendingApplyZeroProfilePorts;
+    std::set<std::string> m_pendingSupportedButNotConfiguredPorts[BUFFER_DIR_MAX];
+    int m_waitApplyAdditionalZeroProfiles;
 
     // BUFFER_POOL table and cache
     ProducerStateTable m_applBufferPoolTable;
