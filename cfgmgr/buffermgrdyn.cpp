@@ -2585,7 +2585,7 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_directi
             }
             else
             {
-                updateBufferObjectToDb(key, zeroProfile, true, direction);
+                updateBufferObjectToDb(key, zeroProfile, false, direction);
                 SWSS_LOG_INFO("No zero profile defined for %s, reclaiming buffer by removing buffer %s %s",
                               profile.c_str(), objectName.c_str(), key.c_str());
             }
