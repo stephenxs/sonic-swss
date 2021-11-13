@@ -196,6 +196,32 @@ struct SaiBulkerTraits<sai_queue_api_t>
     using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
 };
 
+template<>
+struct SaiBulkerTraits<sai_port_api_t>
+{
+    using entry_t = sai_object_id_t;
+    using api_t = sai_port_api_t;
+    using create_entry_fn = sai_create_port_fn;
+    using remove_entry_fn = sai_remove_port_fn;
+    using set_entry_attribute_fn = sai_set_port_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_object_create_fn;
+    using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_scheduler_group_api_t>
+{
+    using entry_t = sai_object_id_t;
+    using api_t = sai_scheduler_group_api_t;
+    using create_entry_fn = sai_create_scheduler_group_fn;
+    using remove_entry_fn = sai_remove_scheduler_group_fn;
+    using set_entry_attribute_fn = sai_set_scheduler_group_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_object_create_fn;
+    using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+};
+
 template <typename T>
 class EntityBulker
 {
@@ -973,5 +999,27 @@ inline ObjectBulker<sai_queue_api_t>::ObjectBulker(SaiBulkerTraits<sai_queue_api
     create_entries = api->create_queues;
     remove_entries = api->remove_queues;
     set_entries_attribute = api->set_queues_attribute;
+    // TODO: wait until available in SAI
+}
+
+template <>
+inline ObjectBulker<sai_port_api_t>::ObjectBulker(SaiBulkerTraits<sai_port_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_ports;
+    remove_entries = api->remove_ports;
+    set_entries_attribute = api->set_ports_attribute;
+    // TODO: wait until available in SAI
+}
+
+template <>
+inline ObjectBulker<sai_scheduler_group_api_t>::ObjectBulker(SaiBulkerTraits<sai_scheduler_group_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_scheduler_groups;
+    remove_entries = api->remove_scheduler_groups;
+    set_entries_attribute = api->set_scheduler_groups_attribute;
     // TODO: wait until available in SAI
 }
