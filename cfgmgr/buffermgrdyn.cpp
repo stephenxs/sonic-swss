@@ -2750,6 +2750,10 @@ void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDownPort(buffer_directi
                 SWSS_LOG_INFO("Removing buffer %s item %s, got combined item %s",
                               objectName.c_str(), key.c_str(), idStr.c_str());
                 supportedNotConfiguredItems.insert(idStr);
+                // According to the logic in reclaimReservedBufferForPort,
+                // only if the m_bufferZeroProfileName is not empty will supported_but_not_configured list be generated.
+                // Now that adjancentItemsSet, which is a sub set of supported_but_not_configured, is NOT empty,
+                // m_bufferZeroProfileName must NOT be empty.
                 updateBufferObjectToDb(keyPrefix + idStr, m_bufferZeroProfileName[direction], true, direction);
             }
         }
