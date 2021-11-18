@@ -30,17 +30,6 @@ BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_f
         m_applBufferEgressProfileListTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)
 {
     readPgProfileLookupFile(pg_lookup_file);
-
-    char *platform = getenv("ASIC_VENDOR");
-    if (NULL == platform)
-    {
-        SWSS_LOG_WARN("Platform environment variable is not defined");
-    }
-    else
-    {
-        m_platform = platform;
-    }
-
     dynamic_buffer_model = false;
 }
 
@@ -133,9 +122,9 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
-task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
+task_process_status BufferMgr::doSpeedUpdateTask(string port)
 {
-    vector<FieldValueTuple> fvVectorPg, fvVectorProfile;
+    vector<FieldValueTuple> fvVector;
     string cable;
     string speed;
 
@@ -153,43 +142,6 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
     }
 
     speed = m_speedLookup[port];
-
-    string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + LOSSLESS_PGS;
-    // key format is pg_lossless_<speed>_<cable>_profile
-    string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
-    string profile_ref = string("[") +
-                         CFG_BUFFER_PROFILE_TABLE_NAME +
-                         m_cfgBufferPgTable.getTableNameSeparator() +
-                         buffer_profile_key +
-                         "]";
-
-    m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
-
-    if (!admin_up && m_platform == "mellanox")
-    {
-        // Remove the entry in BUFFER_PG table if any
-        if (!fvVectorPg.empty())
-        {
-            for (auto &prop : fvVectorPg)
-            {
-                if (fvField(prop) == "profile")
-                {
-                    if (fvValue(prop) == profile_ref)
-                    {
-                        SWSS_LOG_NOTICE("Removing PG %s from port %s which is administrative down", buffer_pg_key.c_str(), port.c_str());
-                        m_cfgBufferPgTable.del(buffer_pg_key);
-                    }
-                    else
-                    {
-                        SWSS_LOG_NOTICE("None default profile %s is configured on PG %s, won't reclaim buffer", fvValue(prop).c_str(), buffer_pg_key.c_str());
-                    }
-                }
-            }
-        }
-
-        return task_process_status::task_success;
-    }
-
     if (m_pgProfileLookup.count(speed) == 0 || m_pgProfileLookup[speed].count(cable) == 0)
     {
         SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
@@ -197,10 +149,13 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
         return task_process_status::task_invalid_entry;
     }
 
+    // Crete record in BUFFER_PROFILE table
+    // key format is pg_lossless_<speed>_<cable>_profile
+    string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
+
     // check if profile already exists - if yes - skip creation
-    m_cfgBufferProfileTable.get(buffer_profile_key, fvVectorProfile);
-    // Create record in BUFFER_PROFILE table
-    if (fvVectorProfile.size() == 0)
+    m_cfgBufferProfileTable.get(buffer_profile_key, fvVector);
+    if (fvVector.size() == 0)
     {
         SWSS_LOG_NOTICE("Creating new profile '%s'", buffer_profile_key.c_str());
 
@@ -218,24 +173,36 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
                                    m_cfgBufferProfileTable.getTableNameSeparator() +
                                    INGRESS_LOSSLESS_PG_POOL_NAME;
 
-        fvVectorProfile.push_back(make_pair("pool", "[" + pg_pool_reference + "]"));
-        fvVectorProfile.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
+        fvVector.push_back(make_pair("pool", "[" + pg_pool_reference + "]"));
+        fvVector.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
         if (m_pgProfileLookup[speed][cable].xon_offset.length() > 0) {
-            fvVectorProfile.push_back(make_pair("xon_offset",
+            fvVector.push_back(make_pair("xon_offset",
                                          m_pgProfileLookup[speed][cable].xon_offset));
         }
-        fvVectorProfile.push_back(make_pair("xoff", m_pgProfileLookup[speed][cable].xoff));
-        fvVectorProfile.push_back(make_pair("size", m_pgProfileLookup[speed][cable].size));
-        fvVectorProfile.push_back(make_pair(mode, m_pgProfileLookup[speed][cable].threshold));
-        m_cfgBufferProfileTable.set(buffer_profile_key, fvVectorProfile);
+        fvVector.push_back(make_pair("xoff", m_pgProfileLookup[speed][cable].xoff));
+        fvVector.push_back(make_pair("size", m_pgProfileLookup[speed][cable].size));
+        fvVector.push_back(make_pair(mode, m_pgProfileLookup[speed][cable].threshold));
+        m_cfgBufferProfileTable.set(buffer_profile_key, fvVector);
     }
     else
     {
         SWSS_LOG_NOTICE("Reusing existing profile '%s'", buffer_profile_key.c_str());
     }
 
+    fvVector.clear();
+
+    string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + LOSSLESS_PGS;
+
+    string profile_ref = string("[") +
+                         CFG_BUFFER_PROFILE_TABLE_NAME +
+                         m_cfgBufferPgTable.getTableNameSeparator() +
+                         buffer_profile_key +
+                         "]";
+
     /* Check if PG Mapping is already then log message and return. */
-    for (auto& prop : fvVectorPg)
+    m_cfgBufferPgTable.get(buffer_pg_key, fvVector);
+
+    for (auto& prop : fvVector)
     {
         if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
         {
@@ -244,10 +211,10 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
         }
     }
 
-    fvVectorPg.clear();
+    fvVector.clear();
 
-    fvVectorPg.push_back(make_pair("profile", profile_ref));
-    m_cfgBufferPgTable.set(buffer_pg_key, fvVectorPg);
+    fvVector.push_back(make_pair("profile", profile_ref));
+    m_cfgBufferPgTable.set(buffer_pg_key, fvVector);
     return task_process_status::task_success;
 }
 
@@ -453,35 +420,26 @@ void BufferMgr::doTask(Consumer &consumer)
         task_process_status task_status = task_process_status::task_success;
         if (op == SET_COMMAND)
         {
-            if (table_name == CFG_PORT_CABLE_LEN_TABLE_NAME)
+            for (auto i : kfvFieldsValues(t))
             {
-                // receive and cache cable length table
-                for (auto i : kfvFieldsValues(t))
+                if (table_name == CFG_PORT_CABLE_LEN_TABLE_NAME)
                 {
+                    // receive and cache cable length table
                     task_status = doCableTask(fvField(i), fvValue(i));
                 }
-            }
-            else if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME)
-            {
-                bool admin_up = false;
-                for (auto i : kfvFieldsValues(t))
+                if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME && (fvField(i) == "speed" || fvField(i) == "admin_status"))
                 {
                     if (fvField(i) == "speed")
                     {
                         m_speedLookup[port] = fvValue(i);
                     }
-                    if (fvField(i) == "admin_status")
+                    
+                    if (m_speedLookup.count(port) != 0)
                     {
-                        admin_up = ("up" == fvValue(i));
+                        // create/update profile for port
+                        task_status = doSpeedUpdateTask(port);
                     }
                 }
-
-                if (m_speedLookup.count(port) != 0)
-                {
-                    // create/update profile for port
-                    task_status = doSpeedUpdateTask(port, admin_up);
-                }
-
                 if (task_status != task_process_status::task_success)
                 {
                     break;
