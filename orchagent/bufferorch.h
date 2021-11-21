@@ -70,6 +70,8 @@ private:
     unique_ptr<DBConnector> m_countersDb;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
+
+    ObjectBulker<sai_queue_api_t>  gQueueBufferBulker;
 };
 #endif /* SWSS_BUFFORCH_H */
 

@@ -183,6 +183,19 @@ struct SaiBulkerTraits<sai_mpls_api_t>
     using bulk_set_entry_attribute_fn = sai_bulk_set_inseg_entry_attribute_fn;
 };
 
+template<>
+struct SaiBulkerTraits<sai_queue_api_t>
+{
+    using entry_t = sai_object_id_t;
+    using api_t = sai_queue_api_t;
+    using create_entry_fn = sai_create_queue_fn;
+    using remove_entry_fn = sai_remove_queue_fn;
+    using set_entry_attribute_fn = sai_set_queue_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_object_create_fn;
+    using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+};
+
 template <typename T>
 class EntityBulker
 {
@@ -643,8 +656,8 @@ public:
     }
 
     // TODO: wait until available in SAI
-    /*
     sai_status_t set_entry_attribute(
+        _Out_ sai_status_t *object_status,
         _In_ sai_object_id_t object_id,
         _In_ const sai_attribute_t *attr)
     {
@@ -662,9 +675,9 @@ public:
                 std::forward_as_tuple(1, *attr));
         }
 
-        return SAI_STATUS_SUCCESS;
+        *object_status = SAI_STATUS_NOT_EXECUTED;
+        return *object_status;
     }
-    */
 
     void flush()
     {
@@ -721,7 +734,6 @@ public:
 
         // Setting
         // TODO: wait until available in SAI
-        /*
         if (!setting_entries.empty())
         {
             std::vector<sai_object_id_t> rs;
@@ -746,7 +758,6 @@ public:
 
             setting_entries.clear();
         }
-        */
     }
 
     void clear()
@@ -808,7 +819,7 @@ private:
     typename Ts::bulk_create_entry_fn                       create_entries;
     typename Ts::bulk_remove_entry_fn                       remove_entries;
     // TODO: wait until available in SAI
-    //typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
+    typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
 
     sai_status_t flush_removing_entries(
         _Inout_ std::vector<sai_object_id_t> &rs)
@@ -880,7 +891,6 @@ private:
     }
 
     // TODO: wait until available in SAI
-    /*
     sai_status_t flush_setting_entries(
         _Inout_ std::vector<sai_object_id_t> &rs,
         _Inout_ std::vector<sai_attribute_t> &ts)
@@ -908,7 +918,6 @@ private:
 
         return status;
     }
-     */
 };
 
 template <>
@@ -920,4 +929,15 @@ inline ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(SaiBulkerTraits<sai_
     remove_entries = api->remove_next_hop_group_members;
     // TODO: wait until available in SAI
     //set_entries_attribute = ;
+}
+
+template <>
+inline ObjectBulker<sai_queue_api_t>::ObjectBulker(SaiBulkerTraits<sai_queue_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) : 
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_queues;
+    remove_entries = api->remove_queues;
+    set_entries_attribute = api->set_queues_attribute;
+    // TODO: wait until available in SAI
 }
