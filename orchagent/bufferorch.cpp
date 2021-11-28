@@ -20,6 +20,8 @@ extern PortsOrch *gPortsOrch;
 extern Directory<Orch*> gDirectory;
 extern sai_object_id_t gSwitchId;
 
+extern size_t gMaxBulkSize;
+
 #define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
 
 
@@ -53,7 +55,10 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
-    m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
+    m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
+    m_queueBufferBulker(sai_queue_api, gSwitchId, gMaxBulkSize),
+    m_portProfileListBulker(sai_port_api, gSwitchId, gMaxBulkSize),
+    m_pgBufferBulker(sai_buffer_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
@@ -807,6 +812,10 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 sai_object_id_t queue_id;
                 queue_id = port.m_queue_ids[ind];
                 SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
+                //sai_status_t status;
+                object_statuses.emplace_back();
+                m_queueBufferBulker.set_entry_attribute(&object_statuses.back(), queue_id, &attr);
+#if 0
                 sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
@@ -819,6 +828,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 }
                 // create/remove a port queue counter for the queue buffer
                 else
+#endif
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
                     auto queues = tokens[1];
@@ -986,6 +996,9 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                     sai_object_id_t pg_id;
                     pg_id = port.m_priority_group_ids[ind];
                     SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);
+                    object_statuses.emplace_back();
+                    m_pgBufferBulker.set_entry_attribute(&object_statuses.back(), pg_id, &attr);
+#if 0
                     sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attribute(pg_id, &attr);
                     if (sai_status != SAI_STATUS_SUCCESS)
                     {
@@ -998,6 +1011,7 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                     }
                     // create or remove a port PG counter for the PG buffer
                     else
+#endif
                     {
                         auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
                         auto pgs = tokens[1];
@@ -1085,9 +1099,12 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
 
     vector<string> port_names = tokenize(key, list_item_delimiter);
-    vector<sai_object_id_t> profile_list;
+
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_INGRESS_BUFFER_PROFILE_LIST;
+
+    profile_list_attributes.emplace_back();
+    auto &profile_list = profile_list_attributes.back();
 
     if (op == SET_COMMAND)
     {
@@ -1130,6 +1147,9 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
+        profile_list_statuses.emplace_back();
+        m_portProfileListBulker.set_entry_attribute(&profile_list_statuses.back(), port.m_port_id, &attr);
+#if 0
         sai_status_t sai_status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
         if (sai_status != SAI_STATUS_SUCCESS)
         {
@@ -1140,6 +1160,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
                 return handle_status;
             }
         }
+#endif
     }
 
     return task_process_status::task_success;
@@ -1156,9 +1177,12 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
     string op = kfvOp(tuple);
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
     vector<string> port_names = tokenize(key, list_item_delimiter);
-    vector<sai_object_id_t> profile_list;
+
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_EGRESS_BUFFER_PROFILE_LIST;
+
+    profile_list_attributes.emplace_back();
+    auto &profile_list = profile_list_attributes.back();
 
     if (op == SET_COMMAND)
     {
@@ -1201,6 +1225,9 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
+        profile_list_statuses.emplace_back();
+        m_portProfileListBulker.set_entry_attribute(&profile_list_statuses.back(), port.m_port_id, &attr);
+#if 0
         sai_status_t sai_status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
         if (sai_status != SAI_STATUS_SUCCESS)
         {
@@ -1211,6 +1238,7 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
                 return handle_status;
             }
         }
+#endif
     }
 
     return task_process_status::task_success;
@@ -1297,4 +1325,11 @@ void BufferOrch::doTask(Consumer &consumer)
                 break;
         }
     }
+
+    m_queueBufferBulker.flush();
+    m_pgBufferBulker.flush();
+    object_statuses.clear();
+    m_portProfileListBulker.flush();
+    profile_list_statuses.clear();
+    profile_list_attributes.clear();
 }

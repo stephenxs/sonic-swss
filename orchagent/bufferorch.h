@@ -7,6 +7,7 @@
 #include "orch.h"
 #include "portsorch.h"
 #include "redisapi.h"
+#include "bulker.h"
 
 #define BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "BUFFER_POOL_WATERMARK_STAT_COUNTER"
 
@@ -72,6 +73,12 @@ private:
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
 
+    ObjectBulker<sai_queue_api_t>  m_queueBufferBulker;
+    ObjectBulker<sai_buffer_api_t> m_pgBufferBulker;
+    ObjectBulker<sai_port_api_t> m_portProfileListBulker;
+    std::deque<sai_status_t>            object_statuses;    // Bulk statuses
+    std::deque<sai_status_t> profile_list_statuses;
+    std::deque<vector<sai_object_id_t>> profile_list_attributes;
 };
 #endif /* SWSS_BUFFORCH_H */
 

@@ -29,6 +29,8 @@ extern QosOrch *gQosOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 
+extern size_t gMaxBulkSize;
+
 map<string, sai_ecn_mark_mode_t> ecn_map = {
     {"ecn_none", SAI_ECN_MARK_MODE_NONE},
     {"ecn_green", SAI_ECN_MARK_MODE_GREEN},
@@ -1247,7 +1249,11 @@ task_process_status QosOrch::handleTcToDscpTable(Consumer& consumer, KeyOpFields
     return tc_to_dscp_handler.processWorkItem(consumer, tuple);
 }
 
-QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
+QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) :
+    Orch(db, tableNames),
+    m_qosMapBulker(sai_port_api, gSwitchId, gMaxBulkSize),
+    m_schedulerGroupBulker(sai_scheduler_group_api, gSwitchId, gMaxBulkSize),
+    m_queueBulker(sai_queue_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
 
@@ -1589,11 +1595,13 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
 
     /* Apply scheduler profile to all port groups  */
     sai_attribute_t attr;
-    sai_status_t    sai_status;
+    //sai_status_t    sai_status;
 
     attr.id = SAI_SCHEDULER_GROUP_ATTR_SCHEDULER_PROFILE_ID;
     attr.value.oid = scheduler_profile_id;
-
+    object_statuses.emplace_back();
+    m_schedulerGroupBulker.set_entry_attribute(&object_statuses.back(), group_id, &attr);
+#if 0
     sai_status = sai_scheduler_group_api->set_scheduler_group_attribute(group_id, &attr);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
@@ -1604,7 +1612,7 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
+#endif
     SWSS_LOG_DEBUG("port:%s, scheduler_profile_id:0x%" PRIx64 " applied to scheduler group:0x%" PRIx64, port.m_alias.c_str(), scheduler_profile_id, group_id);
 
     return true;
@@ -1614,7 +1622,7 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
-    sai_status_t    sai_status;
+    //sai_status_t    sai_status;
     sai_object_id_t queue_id;
 
     if (port.m_queue_ids.size() <= queue_ind)
@@ -1626,6 +1634,9 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
 
     attr.id = SAI_QUEUE_ATTR_WRED_PROFILE_ID;
     attr.value.oid = sai_wred_profile;
+    object_statuses.emplace_back();
+    m_queueBulker.set_entry_attribute(&object_statuses.back(), queue_id, &attr);
+#if 0
     sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
     if (sai_status != SAI_STATUS_SUCCESS)
     {
@@ -1636,6 +1647,7 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+#endif
     return true;
 }
 
@@ -2038,7 +2050,9 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
             sai_attribute_t attr;
             attr.id = it->first;
             attr.value.oid = it->second.second;
-
+            object_statuses.emplace_back();
+            m_qosMapBulker.set_entry_attribute(&object_statuses.back(), port.m_port_id, &attr);
+#if 0
             sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -2050,6 +2064,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                     return task_process_status::task_invalid_entry;
                 }
             }
+#endif
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
         }
 
@@ -2061,7 +2076,8 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
 
         if (pfc_enable || old_pfc_enable)
         {
-            if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable))
+            object_statuses.emplace_back();
+            if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable, &m_qosMapBulker, &object_statuses.back()))
             {
                 SWSS_LOG_ERROR("Failed to apply PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
             }
@@ -2143,6 +2159,11 @@ void QosOrch::doTask(Consumer &consumer)
                 break;
         }
     }
+
+    m_qosMapBulker.flush();
+    m_schedulerGroupBulker.flush();
+    m_queueBulker.flush();
+    object_statuses.clear();
 }
 
 /**

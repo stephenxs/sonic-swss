@@ -15,6 +15,7 @@
 #include "lagid.h"
 #include "flexcounterorch.h"
 #include "events.h"
+#include "bulker.h"
 
 
 #define FCS_LEN 4
@@ -127,7 +128,7 @@ public:
                                  bool ingress,
                                  bool bind);
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
-    bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
+    bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask, ObjectBulker<sai_port_api_t> *qosMapBulker=NULL, sai_status_t *status=NULL);
 
     bool setPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t pfc_bitmask);
     bool getPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t *pfc_bitmask);
