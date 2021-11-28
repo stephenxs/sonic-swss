@@ -18,6 +18,8 @@ extern sai_buffer_api_t *sai_buffer_api;
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 
+extern size_t gMaxBulkSize;
+
 #define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "10000"
 
 
@@ -42,7 +44,8 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
-    m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
+    m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
+    m_queueBufferBulker(sai_queue_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
@@ -780,6 +783,9 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 sai_object_id_t queue_id;
                 queue_id = port.m_queue_ids[ind];
                 SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
+                //sai_status_t status;
+                //m_queueBufferBulker.set_entries_attribute(&status, queue_id, &attr);
+#if 1
                 sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
@@ -790,6 +796,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                         return handle_status;
                     }
                 }
+#endif
             }
         }
     }
@@ -1151,4 +1158,6 @@ void BufferOrch::doTask(Consumer &consumer)
                 break;
         }
     }
+
+    m_queueBufferBulker.flush();
 }

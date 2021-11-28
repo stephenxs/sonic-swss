@@ -7,6 +7,7 @@
 #include "orch.h"
 #include "portsorch.h"
 #include "redisapi.h"
+#include "bulker.h"
 
 #define BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "BUFFER_POOL_WATERMARK_STAT_COUNTER"
 
@@ -71,6 +72,8 @@ private:
     unique_ptr<DBConnector> m_countersDb;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
+
+    ObjectBulker<sai_queue_api_t>  gQueueBufferBulker;
 };
 #endif /* SWSS_BUFFORCH_H */
 
