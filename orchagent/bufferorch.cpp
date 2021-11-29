@@ -784,8 +784,9 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 queue_id = port.m_queue_ids[ind];
                 SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
                 //sai_status_t status;
-                //m_queueBufferBulker.set_entries_attribute(&status, queue_id, &attr);
-#if 1
+                object_statuses.emplace_back();
+                m_queueBufferBulker.set_entry_attribute(&object_statuses.back(), queue_id, &attr);
+#if 0
                 sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
@@ -1160,4 +1161,5 @@ void BufferOrch::doTask(Consumer &consumer)
     }
 
     m_queueBufferBulker.flush();
+    object_statuses.clear();
 }

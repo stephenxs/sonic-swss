@@ -73,7 +73,8 @@ private:
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
 
-    ObjectBulker<sai_queue_api_t>  gQueueBufferBulker;
+    ObjectBulker<sai_queue_api_t>  m_queueBufferBulker;
+    std::deque<sai_status_t>            object_statuses;    // Bulk statuses
 };
 #endif /* SWSS_BUFFORCH_H */
 
