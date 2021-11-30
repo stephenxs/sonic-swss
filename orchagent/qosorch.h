@@ -168,6 +168,8 @@ private:
 
     std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;
     ObjectBulker<sai_port_api_t> m_qosMapBulker;
+    ObjectBulker<sai_scheduler_group_api_t> m_schedulerGroupBulker;
+    ObjectBulker<sai_queue_api_t> m_queueBulker;
     std::deque<sai_status_t> object_statuses;
 };
 #endif /* SWSS_QOSORCH_H */

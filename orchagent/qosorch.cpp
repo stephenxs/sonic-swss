@@ -735,7 +735,9 @@ task_process_status QosOrch::handlePfcToQueueTable(Consumer& consumer)
 
 QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) :
     Orch(db, tableNames),
-    m_qosMapBulker(sai_port_api, gSwitchId, gMaxBulkSize)
+    m_qosMapBulker(sai_port_api, gSwitchId, gMaxBulkSize),
+    m_schedulerGroupBulker(sai_scheduler_group_api, gSwitchId, gMaxBulkSize),
+    m_queueBulker(sai_queue_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
 
@@ -1061,11 +1063,13 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
 
     /* Apply scheduler profile to all port groups  */
     sai_attribute_t attr;
-    sai_status_t    sai_status;
+    //sai_status_t    sai_status;
 
     attr.id = SAI_SCHEDULER_GROUP_ATTR_SCHEDULER_PROFILE_ID;
     attr.value.oid = scheduler_profile_id;
-
+    object_statuses.emplace_back();
+    m_schedulerGroupBulker.set_entry_attribute(&object_statuses.back(), group_id, &attr);
+#if 0
     sai_status = sai_scheduler_group_api->set_scheduler_group_attribute(group_id, &attr);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
@@ -1076,7 +1080,7 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
+#endif
     SWSS_LOG_DEBUG("port:%s, scheduler_profile_id:0x%" PRIx64 " applied to scheduler group:0x%" PRIx64, port.m_alias.c_str(), scheduler_profile_id, group_id);
 
     return true;
@@ -1086,7 +1090,7 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
-    sai_status_t    sai_status;
+    //sai_status_t    sai_status;
     sai_object_id_t queue_id;
 
     if (port.m_queue_ids.size() <= queue_ind)
@@ -1098,6 +1102,9 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
 
     attr.id = SAI_QUEUE_ATTR_WRED_PROFILE_ID;
     attr.value.oid = sai_wred_profile;
+    object_statuses.emplace_back();
+    m_queueBulker.set_entry_attribute(&object_statuses.back(), queue_id, &attr);
+#if 0
     sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
     if (sai_status != SAI_STATUS_SUCCESS)
     {
@@ -1108,6 +1115,7 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+#endif
     return true;
 }
 
@@ -1480,5 +1488,7 @@ void QosOrch::doTask(Consumer &consumer)
     }
 
     m_qosMapBulker.flush();
+    m_schedulerGroupBulker.flush();
+    m_queueBulker.flush();
     object_statuses.clear();
 }
