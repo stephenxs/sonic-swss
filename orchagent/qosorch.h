@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include "orch.h"
 #include "portsorch.h"
+#include "bulker.h"
 
 const string dscp_to_tc_field_name              = "dscp_to_tc_map";
 const string dot1p_to_tc_field_name             = "dot1p_to_tc_map";
@@ -166,5 +167,7 @@ private:
     };
 
     std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;
+    ObjectBulker<sai_port_api_t> m_qosMapBulker;
+    std::deque<sai_status_t> object_statuses;
 };
 #endif /* SWSS_QOSORCH_H */

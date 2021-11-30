@@ -14,6 +14,7 @@
 #include "saihelper.h"
 #include "lagid.h"
 #include "flexcounterorch.h"
+#include "bulker.h"
 
 
 #define FCS_LEN 4
@@ -122,7 +123,7 @@ public:
                                  bool ingress,
                                  bool bind);
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
-    bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
+    bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask, ObjectBulker<sai_port_api_t> *qosMapBulker=NULL, sai_status_t *status=NULL);
 
     void generateQueueMap();
     void generatePriorityGroupMap();

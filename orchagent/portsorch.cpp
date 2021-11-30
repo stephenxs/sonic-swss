@@ -1099,7 +1099,7 @@ bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask)
     return true;
 }
 
-bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
+bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask, ObjectBulker<sai_port_api_t> *qosMapBulker, sai_status_t *status)
 {
     SWSS_LOG_ENTER();
 
@@ -1128,14 +1128,21 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
 
     attr.value.u8 = pfc_bitmask;
 
-    sai_status_t status = sai_port_api->set_port_attribute(portId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (qosMapBulker)
     {
-        SWSS_LOG_ERROR("Failed to set PFC 0x%x to port id 0x%" PRIx64 " (rc:%d)", attr.value.u8, portId, status);
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
+        qosMapBulker->set_entry_attribute(status, portId, &attr);
+    }
+    else
+    {
+        sai_status_t status = sai_port_api->set_port_attribute(portId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            SWSS_LOG_ERROR("Failed to set PFC 0x%x to port id 0x%" PRIx64 " (rc:%d)", attr.value.u8, portId, status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
     }
 

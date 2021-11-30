@@ -25,6 +25,8 @@ extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 
+extern size_t gMaxBulkSize;
+
 map<string, sai_ecn_mark_mode_t> ecn_map = {
     {"ecn_none", SAI_ECN_MARK_MODE_NONE},
     {"ecn_green", SAI_ECN_MARK_MODE_GREEN},
@@ -731,7 +733,9 @@ task_process_status QosOrch::handlePfcToQueueTable(Consumer& consumer)
     return pfc_to_queue_handler.processWorkItem(consumer);
 }
 
-QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
+QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) :
+    Orch(db, tableNames),
+    m_qosMapBulker(sai_port_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
 
@@ -1374,7 +1378,9 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             sai_attribute_t attr;
             attr.id = it->first;
             attr.value.oid = it->second.second;
-
+            object_statuses.emplace_back();
+            m_qosMapBulker.set_entry_attribute(&object_statuses.back(), port.m_port_id, &attr);
+#if 0
             sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -1386,12 +1392,14 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
                     return task_process_status::task_invalid_entry;
                 }
             }
+#endif
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
         }
 
         if (pfc_enable)
         {
-            if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable))
+            object_statuses.emplace_back();
+            if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable, &m_qosMapBulker, &object_statuses.back()))
             {
                 SWSS_LOG_ERROR("Failed to apply PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
             }
@@ -1470,4 +1478,7 @@ void QosOrch::doTask(Consumer &consumer)
                 break;
         }
     }
+
+    m_qosMapBulker.flush();
+    object_statuses.clear();
 }
