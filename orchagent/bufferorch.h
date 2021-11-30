@@ -74,6 +74,7 @@ private:
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
 
     ObjectBulker<sai_queue_api_t>  m_queueBufferBulker;
+    ObjectBulker<sai_buffer_api_t> m_pgBufferBulker;
     ObjectBulker<sai_port_api_t> m_portProfileListBulker;
     std::deque<sai_status_t>            object_statuses;    // Bulk statuses
     std::deque<sai_status_t> profile_list_statuses;

@@ -46,7 +46,8 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
     m_queueBufferBulker(sai_queue_api, gSwitchId, gMaxBulkSize),
-    m_portProfileListBulker(sai_port_api, gSwitchId, gMaxBulkSize)
+    m_portProfileListBulker(sai_port_api, gSwitchId, gMaxBulkSize),
+    m_pgBufferBulker(sai_buffer_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
@@ -926,6 +927,9 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                     sai_object_id_t pg_id;
                     pg_id = port.m_priority_group_ids[ind];
                     SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);
+                    object_statuses.emplace_back();
+                    m_pgBufferBulker.set_entry_attribute(&object_statuses.back(), pg_id, &attr);
+#if 0
                     sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attribute(pg_id, &attr);
                     if (sai_status != SAI_STATUS_SUCCESS)
                     {
@@ -936,6 +940,7 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                             return handle_status;
                         }
                     }
+#endif
                 }
             }
         }
@@ -1172,6 +1177,7 @@ void BufferOrch::doTask(Consumer &consumer)
     }
 
     m_queueBufferBulker.flush();
+    m_pgBufferBulker.flush();
     object_statuses.clear();
     m_portProfileListBulker.flush();
     profile_list_statuses.clear();
