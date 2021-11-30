@@ -45,7 +45,8 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
-    m_queueBufferBulker(sai_queue_api, gSwitchId, gMaxBulkSize)
+    m_queueBufferBulker(sai_queue_api, gSwitchId, gMaxBulkSize),
+    m_portProfileListBulker(sai_port_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
@@ -981,7 +982,8 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
 
     vector<string> port_names = tokenize(key, list_item_delimiter);
-    vector<sai_object_id_t> profile_list;
+    profile_list_attributes.emplace_back();
+    auto &profile_list = profile_list_attributes.back();
 
     string profile_name_list;
     ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name, tuple, profile_list, profile_name_list);
@@ -1009,6 +1011,9 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
+        profile_list_statuses.emplace_back();
+        m_portProfileListBulker.set_entry_attribute(&profile_list_statuses.back(), port.m_port_id, &attr);
+#if 0
         sai_status_t sai_status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
         if (sai_status != SAI_STATUS_SUCCESS)
         {
@@ -1019,6 +1024,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
                 return handle_status;
             }
         }
+#endif
     }
 
     return task_process_status::task_success;
@@ -1035,7 +1041,8 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
     string op = kfvOp(tuple);
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
     vector<string> port_names = tokenize(key, list_item_delimiter);
-    vector<sai_object_id_t> profile_list;
+    profile_list_attributes.emplace_back();
+    auto &profile_list = profile_list_attributes.back();
 
     string profile_name_list;
     ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name, tuple, profile_list, profile_name_list);
@@ -1063,6 +1070,9 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
+        profile_list_statuses.emplace_back();
+        m_portProfileListBulker.set_entry_attribute(&profile_list_statuses.back(), port.m_port_id, &attr);
+#if 0
         sai_status_t sai_status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
         if (sai_status != SAI_STATUS_SUCCESS)
         {
@@ -1073,6 +1083,7 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
                 return handle_status;
             }
         }
+#endif
     }
 
     return task_process_status::task_success;
@@ -1162,4 +1173,7 @@ void BufferOrch::doTask(Consumer &consumer)
 
     m_queueBufferBulker.flush();
     object_statuses.clear();
+    m_portProfileListBulker.flush();
+    profile_list_statuses.clear();
+    profile_list_attributes.clear();
 }
