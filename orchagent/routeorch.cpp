@@ -790,6 +790,11 @@ void RouteOrch::doTask(Consumer& consumer)
                     }
                 }
 
+                sai_route_entry_t route_entry;
+                route_entry.vr_id = vrf_id;
+                route_entry.switch_id = gSwitchId;
+                copy(route_entry.destination, ip_prefix);
+
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
                 {
                     if (alsv[0] == "unknown")
@@ -833,6 +838,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index) ||
+                    gRouteBulker.bulk_entry_pending_removal(route_entry) ||
                     ctx.using_temp_nhg)
                 {
                     if (addRoute(ctx, nhg))
