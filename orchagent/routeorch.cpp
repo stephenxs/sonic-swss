@@ -1880,6 +1880,25 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         }
         else
         {
+            if (!blackhole && vrf_id == gVirtualRouterId && ipPrefix.isDefaultRoute())
+            {
+                // Always set packet action for default route to avoid conflict settings
+                // in case a SET follows a DEL on the default route in the same bulk.
+                // - On DEL default route, the packet action will be set to DROP
+                // - On SET default route, as the default route has NOT been removed from m_syncdRoute
+                //   it calls SAI set_route_attributes instead of crate_route
+                //   However, packet action is called only when a route entry is created
+                //   This leads to conflict settings:
+                //   - packet action: DROP
+                //   - next hop: a valid next hop id
+                // To avoid this, we always set packet action for default route.
+                route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+                route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+
+                object_statuses.emplace_back();
+                gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+            }
+
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
             route_attr.value.oid = next_hop_id;
 
