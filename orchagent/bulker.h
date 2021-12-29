@@ -168,6 +168,7 @@ struct SaiBulkerTraits<sai_next_hop_group_api_t>
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
     // TODO: wait until available in SAI
     using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+    using bulk_get_entry_attribute_fn = sai_bulk_object_get_attribute_fn;
 };
 
 template<>
@@ -194,6 +195,7 @@ struct SaiBulkerTraits<sai_queue_api_t>
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
     using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+    using bulk_get_entry_attribute_fn = sai_bulk_object_get_attribute_fn;
 };
 
 template<>
@@ -207,6 +209,7 @@ struct SaiBulkerTraits<sai_port_api_t>
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
     using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+    using bulk_get_entry_attribute_fn = sai_bulk_object_get_attribute_fn;
 };
 
 template<>
@@ -220,6 +223,7 @@ struct SaiBulkerTraits<sai_scheduler_group_api_t>
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
     using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+    using bulk_get_entry_attribute_fn = sai_bulk_object_get_attribute_fn;
 };
 
 template<>
@@ -233,6 +237,7 @@ struct SaiBulkerTraits<sai_buffer_api_t>
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
     using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+    using bulk_get_entry_attribute_fn = sai_bulk_object_get_attribute_fn;
 };
 
 template <typename T>
@@ -674,6 +679,24 @@ public:
         return SAI_STATUS_NOT_EXECUTED;
     }
 
+    sai_status_t get_entry_attribute(
+        _Out_ sai_status_t *object_status,
+        _In_ sai_object_id_t object_id,
+        _In_ uint32_t attr_count,
+        _In_ sai_attribute_t *attr_list)
+    {
+//        SWSS_LOG_NOTICE("BULK GET EMPLACING %" PRIx64 " %p", object_id, attr_list);
+        getting_entries.emplace_back(/*std::piecewise_construct,*/
+                                     object_id,
+                                     //std::vector<sai_attribute_t>(attr_list, attr_list + attr_count),
+                                     attr_list,
+                                     attr_count,
+                                     object_status);
+
+        *object_status = SAI_STATUS_NOT_EXECUTED;
+        return *object_status;
+    }
+
     sai_status_t remove_entry(
         _Out_ sai_status_t *object_status,
         _In_ sai_object_id_t object_id)
@@ -754,6 +777,37 @@ public:
             flush_removing_entries(rs);
 
             removing_entries.clear();
+        }
+
+        // Getting
+        if (!getting_entries.empty())
+        {
+            std::vector<sai_object_id_t> rs;
+            std::vector<sai_attribute_t *> tss;
+            std::vector<uint32_t> cs;
+            std::vector<sai_status_t *> statuses;
+
+            for (auto &i: getting_entries)
+            {
+                sai_object_id_t oid = std::get<0>(i);
+                auto pattrs = std::get<1>(i);
+                auto attr_count = std::get<2>(i);
+
+                rs.emplace_back(oid);
+                tss.emplace_back(pattrs);
+                cs.emplace_back((uint32_t)attr_count);
+                statuses.emplace_back(std::get<3>(i));
+
+//                SWSS_LOG_NOTICE("BULK HANDLING GETTING ENTRIES %" PRIx64 " %p", oid, pattrs);
+
+                if (rs.size() >= max_bulk_size)
+                {
+                    flush_getting_entries(rs, tss, cs, statuses);
+                }
+            }
+            flush_getting_entries(rs, tss, cs, statuses);
+
+            getting_entries.clear();
         }
 
         // Creating
@@ -863,6 +917,13 @@ private:
             std::vector<sai_attribute_t>                    // - attrs
     >>                                                      creating_entries;
 
+    std::vector<std::tuple<                                 // A vector of tuple of
+            sai_object_id_t,                                // - object_id
+            sai_attribute_t *,                              // - attrs
+            size_t,                                         // - number of attributes
+            sai_status_t *                                  // object_status
+    >>                                                      getting_entries;
+
     std::unordered_map<                                     // A map of
             sai_object_id_t,                                // object_id -> (OUT object_status, attributes)
             std::vector<
@@ -871,7 +932,7 @@ private:
                         sai_status_t *
                     >
             >
-    >                                                       setting_entries;
+        >                                                   setting_entries;
 
                                                             // A map of
                                                             // object_id -> object_status
@@ -881,6 +942,7 @@ private:
     typename Ts::bulk_remove_entry_fn                       remove_entries;
     // TODO: wait until available in SAI
     typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
+    typename Ts::bulk_get_entry_attribute_fn                get_entries_attribute;
 
     sai_status_t flush_removing_entries(
         _Inout_ std::vector<sai_object_id_t> &rs)
@@ -910,6 +972,36 @@ private:
         }
 
         rs.clear();
+
+        return status;
+    }
+
+    sai_status_t flush_getting_entries(
+        _Inout_ std::vector<sai_object_id_t> &rs,
+        _Inout_ std::vector<sai_attribute_t*> &tss,
+        _Inout_ std::vector<uint32_t> &cs,
+        _Inout_ std::vector<sai_status_t *> &pstatuses)
+    {
+        if (rs.empty())
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+        size_t count = rs.size();
+        std::vector<sai_status_t> statuses(count);
+        //      SWSS_LOG_NOTICE("BULK FLUSHING");
+        sai_status_t status = (*get_entries_attribute)((uint32_t)count, rs.data(), cs.data(), tss.data(),
+                                                      SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
+
+        for (size_t i = 0; i < count; i++)
+        {
+            *pstatuses[i] = statuses[i];
+//            SWSS_LOG_NOTICE("BULK GOT oid %" PRIx64 "attr %d %p", rs[i], tss[i]->value.u32, tss[i]);
+        }
+
+        rs.clear();
+        tss.clear();
+        cs.clear();
+        statuses.clear();
 
         return status;
     }
@@ -1012,6 +1104,7 @@ inline ObjectBulker<sai_queue_api_t>::ObjectBulker(SaiBulkerTraits<sai_queue_api
     create_entries = api->create_queues;
     remove_entries = api->remove_queues;
     set_entries_attribute = api->set_queues_attribute;
+    get_entries_attribute = api->get_queues_attribute;
     // TODO: wait until available in SAI
 }
 
@@ -1023,6 +1116,7 @@ inline ObjectBulker<sai_port_api_t>::ObjectBulker(SaiBulkerTraits<sai_port_api_t
     create_entries = api->create_ports;
     remove_entries = api->remove_ports;
     set_entries_attribute = api->set_ports_attribute;
+    get_entries_attribute = api->get_ports_attribute;
     // TODO: wait until available in SAI
 }
 
@@ -1034,6 +1128,7 @@ inline ObjectBulker<sai_scheduler_group_api_t>::ObjectBulker(SaiBulkerTraits<sai
     create_entries = api->create_scheduler_groups;
     remove_entries = api->remove_scheduler_groups;
     set_entries_attribute = api->set_scheduler_groups_attribute;
+    get_entries_attribute = api->get_scheduler_groups_attribute;
     // TODO: wait until available in SAI
 }
 
@@ -1045,5 +1140,6 @@ inline ObjectBulker<sai_buffer_api_t>::ObjectBulker(SaiBulkerTraits<sai_buffer_a
     create_entries = api->create_ingress_priority_groups;
     remove_entries = api->remove_ingress_priority_groups;
     set_entries_attribute = api->set_ingress_priority_groups_attribute;
+    get_entries_attribute = api->get_ingress_priority_groups_attribute;
     // TODO: wait until available in SAI
 }
