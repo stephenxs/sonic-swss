@@ -1269,7 +1269,45 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             .group_has_been_initialized = std::vector<bool>(groups_count)
         };
 
+        auto &scheduler_group = m_scheduler_group_port_info[port.m_port_id];
         SWSS_LOG_INFO("Port %s has been initialized with %u group(s)", port.m_alias.c_str(), groups_count);
+
+        // Get number of child groups for each of the group
+        deque<sai_attribute_t> attrs_child_counts;
+        deque<sai_attribute_t> attrs_child_groups;
+        for (uint32_t ii = 0; ii < groups_count; ii++)
+        {
+            attrs_child_counts.emplace_back();
+            auto &nattr = attrs_child_counts.back();
+            nattr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;
+            object_statuses.emplace_back();
+            m_schedulerGroupBulker.get_entry_attribute(&object_statuses.back(), scheduler_group.groups[ii], 1, &attrs_child_counts.back());
+//            SWSS_LOG_NOTICE("BULK GETTING port %s group %" PRIx64 " number of child group", port.m_alias.c_str(), scheduler_group.groups[ii]);
+        }
+        m_schedulerGroupBulker.flush();
+        for (uint32_t ii = 0; ii < groups_count; ii++)
+        {
+            auto &attr_count = attrs_child_counts[ii];
+//            SWSS_LOG_NOTICE("BULK GOT port %s group %" PRIx64 " number of child group %d", port.m_alias.c_str(), scheduler_group.groups[ii], attr_count.value.u32);
+
+            if (attr_count.value.u32 == 0)
+                continue;
+
+            attrs_child_groups.emplace_back();
+            scheduler_group.child_groups[ii].resize(attr_count.value.u32);
+
+            auto &attr_children = attrs_child_groups.back();
+            attr_children.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
+            attr_children.value.objlist.list = scheduler_group.child_groups[ii].data();
+            attr_children.value.objlist.count = attr_count.value.u32;
+            m_schedulerGroupBulker.get_entry_attribute(&object_statuses.back(), scheduler_group.groups[ii], 1, &attr_children);
+        }
+        m_schedulerGroupBulker.flush();
+
+        for (uint32_t ii = 0; ii < groups_count; ii++)
+        {
+            scheduler_group.group_has_been_initialized[ii] = true;
+        }
     }
 
     /* Lookup groups to which queue belongs */
@@ -1302,7 +1340,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
 
             uint32_t child_count = attr.value.u32;
 
-            SWSS_LOG_INFO("Port %s group 0x%" PRIx64 " has been initialized with %u child group(s)", port.m_alias.c_str(), group_id, child_count);
+            SWSS_LOG_NOTICE/*INFO*/("Port %s group 0x%" PRIx64 " has been initialized with %u child group(s)", port.m_alias.c_str(), group_id, child_count);
             scheduler_group_port_info.group_has_been_initialized[ii] = true;
 
             // skip this iteration if there're no children in this group
@@ -1333,6 +1371,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
         {
             if (child_group_id == queue_id)
             {
+                SWSS_LOG_NOTICE("Port %s child group id %" PRIx64 " qid %" PRIx64, port.m_alias.c_str(), child_group_id, queue_id);
                 return group_id;
             }
         }
