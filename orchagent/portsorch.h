@@ -417,5 +417,10 @@ private:
     set<sai_object_id_t> m_macsecEnabledPorts;
 
     std::unordered_set<std::string> generateCounterStats(const string& type, bool gearbox = false);
+
+    set<string> m_portsPendingBulkGet;
+    ObjectBulker<sai_port_api_t> m_portBulker;
+    deque<sai_attribute_t> m_bulkAttributes;
+    deque<sai_status_t> m_bulkStatuses;
 };
 #endif /* SWSS_PORTSORCH_H */
