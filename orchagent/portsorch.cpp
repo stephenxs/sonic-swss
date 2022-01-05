@@ -272,6 +272,7 @@ static bool isValidPortTypeForLagMember(const Port& port)
     return (port.m_type == Port::Type::PHY || port.m_type == Port::Type::SYSTEM);
 }
 
+extern size_t gMaxBulkSize;
 /*
  * Initialize PortsOrch
  * 0) If Gearbox is enabled, then initialize the external PHYs as defined in
@@ -292,7 +293,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
-        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
+        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        m_portBulker(sai_port_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
 
@@ -2346,7 +2348,10 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                     m_recircPortRole[alias] = role;
                 }
 
-                SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
+//                SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
+
+                m_portsPendingBulkGet.insert(alias);
+//                SWSS_LOG_NOTICE("INSERT PENDING BULK GET %s", alias.c_str());
             }
             else
             {
@@ -2769,6 +2774,64 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[it->first]);
                     it++;
                 }
+
+                // Initialize port's queues/PGs in bulk mode
+                // Fetch numbers
+                for (auto &alias : m_portsPendingBulkGet)
+                {
+//                    SWSS_LOG_NOTICE("HANDLING PENDING BULK GET %s", get<0>(it->second).c_str());
+                    auto &port = m_portList[alias];
+                    if (port.m_type != Port::PHY)
+                        continue;
+                    m_bulkAttributes.emplace_back();
+                    m_bulkStatuses.emplace_back();
+                    auto &attrPGCount = m_bulkAttributes.back();
+                    attrPGCount.id = SAI_PORT_ATTR_NUMBER_OF_INGRESS_PRIORITY_GROUPS;
+                    m_portBulker.get_entry_attribute(&m_bulkStatuses.back(), port.m_port_id, 1, &attrPGCount);
+
+                    m_bulkAttributes.emplace_back();
+                    m_bulkStatuses.emplace_back();
+                    auto &attrQueueCount = m_bulkAttributes.back();
+                    attrQueueCount.id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
+                    m_portBulker.get_entry_attribute(&m_bulkStatuses.back(), port.m_port_id, 1, &attrQueueCount);
+
+                    m_bulkAttributes.emplace_back();
+                    m_bulkStatuses.emplace_back();
+                    auto &attrHeadroomSize = m_bulkAttributes.back();
+                    attrHeadroomSize.id = SAI_PORT_ATTR_QOS_MAXIMUM_HEADROOM_SIZE;
+                    m_portBulker.get_entry_attribute(&m_bulkStatuses.back(), port.m_port_id, 1, &attrHeadroomSize);
+                }
+                m_portBulker.flush();
+                uint32_t index = 0;
+                for (auto &alias : m_portsPendingBulkGet)
+                {
+                    auto &port = m_portList[alias];
+                    if (port.m_type != Port::PHY)
+                        continue;
+//                    SWSS_LOG_NOTICE("Bulk Got PG count %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
+                    // PG count
+                    port.m_priority_group_ids.resize(m_bulkAttributes[index].value.u32);
+                    port.m_priority_group_lock.resize(m_bulkAttributes[index].value.u32);
+                    port.m_priority_group_pending_profile.resize(m_bulkAttributes[index].value.u32);
+                    index++;
+//                    SWSS_LOG_NOTICE("Bulk Got queue count %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
+                    port.m_queue_ids.resize(m_bulkAttributes[index].value.u32);
+                    port.m_queue_lock.resize(m_bulkAttributes[index].value.u32);
+                    index++;
+//                    SWSS_LOG_NOTICE("Bulk Got headroom size %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
+                    port.m_maximum_headroom = m_bulkAttributes[index].value.u32;
+                    index++;
+
+                    initializePriorityGroups(port);
+                    initializeQueues(port);
+                    //initializePortMaximumHeadroom(port);
+                    initializePortBufferMaximumParameters(port);
+                }
+                m_portBulker.flush();
+
+                m_bulkStatuses.clear();
+                m_bulkAttributes.clear();
+                m_portsPendingBulkGet.clear();
 
                 m_portConfigState = PORT_CONFIG_DONE;
             }
@@ -3942,7 +4005,7 @@ void PortsOrch::doTask(Consumer &consumer)
 void PortsOrch::initializeQueues(Port &port)
 {
     SWSS_LOG_ENTER();
-
+#if 0
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
     sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
@@ -3964,11 +4027,17 @@ void PortsOrch::initializeQueues(Port &port)
     {
         return;
     }
+#endif
+    m_bulkAttributes.emplace_back();
+    m_bulkStatuses.emplace_back();
+    sai_attribute_t &attr = m_bulkAttributes.back();
 
     attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
     attr.value.objlist.count = (uint32_t)port.m_queue_ids.size();
     attr.value.objlist.list = port.m_queue_ids.data();
+    m_portBulker.get_entry_attribute(&m_bulkStatuses.back(), port.m_port_id, 1, &attr);
 
+#if 0
     status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -3979,6 +4048,7 @@ void PortsOrch::initializeQueues(Port &port)
             throw runtime_error("PortsOrch initialization failure.");
         }
     }
+#endif
 
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
 }
@@ -3986,7 +4056,7 @@ void PortsOrch::initializeQueues(Port &port)
 void PortsOrch::initializePriorityGroups(Port &port)
 {
     SWSS_LOG_ENTER();
-
+#if 0
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_NUMBER_OF_INGRESS_PRIORITY_GROUPS;
     sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
@@ -4009,11 +4079,15 @@ void PortsOrch::initializePriorityGroups(Port &port)
     {
         return;
     }
-
+#endif
+    m_bulkAttributes.emplace_back();
+    m_bulkStatuses.emplace_back();
+    sai_attribute_t &attr = m_bulkAttributes.back();
     attr.id = SAI_PORT_ATTR_INGRESS_PRIORITY_GROUP_LIST;
     attr.value.objlist.count = (uint32_t)port.m_priority_group_ids.size();
     attr.value.objlist.list = port.m_priority_group_ids.data();
-
+    m_portBulker.get_entry_attribute(&m_bulkStatuses.back(), port.m_port_id, 1, &attr);
+#if 0
     status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -4024,6 +4098,7 @@ void PortsOrch::initializePriorityGroups(Port &port)
             throw runtime_error("PortsOrch initialization failure.");
         }
     }
+#endif
     SWSS_LOG_INFO("Get priority groups for port %s", port.m_alias.c_str());
 }
 
@@ -4062,10 +4137,10 @@ bool PortsOrch::initializePort(Port &port)
 
     SWSS_LOG_NOTICE("Initializing port alias:%s pid:%" PRIx64, port.m_alias.c_str(), port.m_port_id);
 
-    initializePriorityGroups(port);
-    initializeQueues(port);
-    initializePortMaximumHeadroom(port);
-    initializePortBufferMaximumParameters(port);
+//    initializePriorityGroups(port);
+//    initializeQueues(port);
+//    initializePortMaximumHeadroom(port);
+//    initializePortBufferMaximumParameters(port);
 
     /* Create host interface */
     if (!addHostIntfs(port, port.m_alias, port.m_hif_id))
