@@ -23,6 +23,7 @@ namespace qosorch_test
     int sai_remove_qos_map_count;
     int sai_remove_wred_profile_count;
     int sai_remove_scheduler_count;
+    sai_object_id_t switch_dscp_to_tc_map_id;
 
     sai_remove_scheduler_fn old_remove_scheduler;
     sai_scheduler_api_t ut_sai_scheduler_api, *pold_sai_scheduler_api;
@@ -30,8 +31,18 @@ namespace qosorch_test
     sai_wred_api_t ut_sai_wred_api, *pold_sai_wred_api;
     sai_remove_qos_map_fn old_remove_qos_map;
     sai_qos_map_api_t ut_sai_qos_map_api, *pold_sai_qos_map_api;
+    sai_set_switch_attribute_fn old_set_switch_attribute_fn;
+    sai_switch_api_t ut_sai_switch_api, *pold_sai_switch_api;
 
-    sai_status_t _ut_stub_sai_remove_qos_map_fn(sai_object_id_t qos_map_id)
+    sai_status_t _ut_stub_sai_set_switch_attribute(sai_object_id_t switch_id, const sai_attribute_t *attr)
+    {
+        auto rc = old_set_switch_attribute_fn(switch_id, attr);
+        if (rc == SAI_STATUS_SUCCESS && attr->id == SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP)
+            switch_dscp_to_tc_map_id = attr->value.oid;
+        return rc;
+    }
+
+    sai_status_t _ut_stub_sai_remove_qos_map(sai_object_id_t qos_map_id)
     {
         auto rc = old_remove_qos_map(qos_map_id);
         if (rc == SAI_STATUS_SUCCESS)
@@ -39,7 +50,7 @@ namespace qosorch_test
         return rc;
     }
 
-    sai_status_t _ut_stub_sai_remove_wred_fn(sai_object_id_t wred_id)
+    sai_status_t _ut_stub_sai_remove_wred(sai_object_id_t wred_id)
     {
         auto rc = old_remove_wred(wred_id);
         if (rc == SAI_STATUS_SUCCESS)
@@ -47,7 +58,7 @@ namespace qosorch_test
         return rc;
     }
 
-    sai_status_t _ut_stub_sai_remove_scheduler_fn(sai_object_id_t scheduler_id)
+    sai_status_t _ut_stub_sai_remove_scheduler(sai_object_id_t scheduler_id)
     {
         auto rc = old_remove_scheduler(scheduler_id);
         if (rc == SAI_STATUS_SUCCESS)
@@ -112,15 +123,21 @@ namespace qosorch_test
 
             ut_helper::initSaiApi(profile);
 
+            // Hack SAI APIs
             ReplaceSaiRemoveApi<sai_qos_map_api_t, sai_remove_qos_map_fn>(sai_qos_map_api, ut_sai_qos_map_api, pold_sai_qos_map_api,
-                                                                          _ut_stub_sai_remove_qos_map_fn, sai_qos_map_api->remove_qos_map,
+                                                                          _ut_stub_sai_remove_qos_map, sai_qos_map_api->remove_qos_map,
                                                                           old_remove_qos_map, ut_sai_qos_map_api.remove_qos_map);
             ReplaceSaiRemoveApi<sai_scheduler_api_t, sai_remove_scheduler_fn>(sai_scheduler_api, ut_sai_scheduler_api, pold_sai_scheduler_api,
-                                                                              _ut_stub_sai_remove_scheduler_fn, sai_scheduler_api->remove_scheduler,
+                                                                              _ut_stub_sai_remove_scheduler, sai_scheduler_api->remove_scheduler,
                                                                               old_remove_scheduler, ut_sai_scheduler_api.remove_scheduler);
             ReplaceSaiRemoveApi<sai_wred_api_t, sai_remove_wred_fn>(sai_wred_api, ut_sai_wred_api, pold_sai_wred_api,
-                                                                    _ut_stub_sai_remove_wred_fn, sai_wred_api->remove_wred,
+                                                                    _ut_stub_sai_remove_wred, sai_wred_api->remove_wred,
                                                                     old_remove_wred, ut_sai_wred_api.remove_wred);
+            pold_sai_switch_api = sai_switch_api;
+            ut_sai_switch_api = *pold_sai_switch_api;
+            old_set_switch_attribute_fn = pold_sai_switch_api->set_switch_attribute;
+            sai_switch_api = &ut_sai_switch_api;
+            ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
 
             // Init switch and create dependencies
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -390,6 +407,7 @@ namespace qosorch_test
             sai_qos_map_api = pold_sai_qos_map_api;
             sai_scheduler_api = pold_sai_scheduler_api;
             sai_wred_api = pold_sai_wred_api;
+            sai_switch_api = pold_sai_switch_api;
             ut_helper::uninitSaiApi();
         }
     };
@@ -494,6 +512,8 @@ namespace qosorch_test
         // And the sai remove API has been called
         ASSERT_EQ(current_sai_remove_wred_profile_count + 1, sai_remove_wred_profile_count);
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("AZURE_LOSSLESS"), 0);
+        // Other field should be untouched
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.1");
     }
 
     TEST_F(QosOrchTest, QosOrchTestQueueRemoveScheduler)
@@ -537,12 +557,17 @@ namespace qosorch_test
         // And the sai remove API has been called
         ASSERT_EQ(current_sai_remove_scheduler_count + 1, sai_remove_scheduler_count);
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_SCHEDULER_TABLE_NAME]).count("scheduler.1"), 0);
+        // Other field should be untouched
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "wred_profile", CFG_WRED_PROFILE_TABLE_NAME, "AZURE_LOSSLESS");
     }
 
-    TEST_F(QosOrchTest, QosOrchTestQueueReplaceField)
+    TEST_F(QosOrchTest, QosOrchTestQueueReplaceFieldAndRemoveObject)
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
         Table queueTable = Table(m_config_db.get(), CFG_QUEUE_TABLE_NAME);
+        auto queueConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_QUEUE_TABLE_NAME));
+        auto wredProfileConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        auto schedulerConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_SCHEDULER_TABLE_NAME));
 
         queueTable.set("Ethernet0|3",
                        {
@@ -561,18 +586,19 @@ namespace qosorch_test
                                {"scheduler", "scheduler.0"},
                                {"wred_profile", "AZURE_LOSSLESS"}
                            }});
-        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_QUEUE_TABLE_NAME));
-        consumer->addToSync(entries);
+        queueConsumer->addToSync(entries);
         entries.clear();
         // Drain QUEUE table
         static_cast<Orch *>(gQosOrch)->doTask();
         // Make sure the dependency is updated
         CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.0");
+        // And the other field is not touched
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "wred_profile", CFG_WRED_PROFILE_TABLE_NAME, "AZURE_LOSSLESS");
 
         RemoveItem(CFG_SCHEDULER_TABLE_NAME, "scheduler.1");
         auto current_sai_remove_scheduler_count = sai_remove_scheduler_count;
         static_cast<Orch *>(gQosOrch)->doTask();
-        ASSERT_EQ(current_sai_remove_scheduler_count + 1, sai_remove_scheduler_count);
+        ASSERT_EQ(++current_sai_remove_scheduler_count, sai_remove_scheduler_count);
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_SCHEDULER_TABLE_NAME]).count("scheduler.1"), 0);
 
         entries.push_back({"AZURE_LOSSLESS_1", "SET",
@@ -591,35 +617,61 @@ namespace qosorch_test
                                {"red_min_threshold", "1048576"},
                                {"wred_red_enable", "true"}
                            }});
-        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
-        consumer->addToSync(entries);
+        wredProfileConsumer->addToSync(entries);
         entries.clear();
         // Drain WRED_PROFILE table
         static_cast<Orch *>(gQosOrch)->doTask();
 
-        // Remove wred_profile from Ethernet0 queue 3
+        // Replace wred_profile from Ethernet0 queue 3
         entries.push_back({"Ethernet0|3", "SET",
                            {
                                {"scheduler", "scheduler.0"},
                                {"wred_profile", "AZURE_LOSSLESS_1"}
                            }});
-        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_QUEUE_TABLE_NAME));
-        consumer->addToSync(entries);
+        queueConsumer->addToSync(entries);
         entries.clear();
         // Drain QUEUE table
         static_cast<Orch *>(gQosOrch)->doTask();
         // Make sure the dependency is updated
         CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "wred_profile", CFG_WRED_PROFILE_TABLE_NAME, "AZURE_LOSSLESS_1");
+        // And the other field is not touched
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.0");
 
         RemoveItem(CFG_WRED_PROFILE_TABLE_NAME, "AZURE_LOSSLESS");
         // Drain WRED_PROFILE table
         auto current_sai_remove_wred_profile_count = sai_remove_wred_profile_count;
         static_cast<Orch *>(gQosOrch)->doTask();
-        ASSERT_EQ(current_sai_remove_wred_profile_count + 1, sai_remove_wred_profile_count);
+        ASSERT_EQ(++current_sai_remove_wred_profile_count, sai_remove_wred_profile_count);
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("AZURE_LOSSLESS"), 0);
+
+        // Remove object
+        entries.push_back({"Ethernet0|3", "DEL", {}});
+        queueConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        // Make sure the dependency is updated
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "wred_profile", CFG_WRED_PROFILE_TABLE_NAME);
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "scheduler", CFG_SCHEDULER_TABLE_NAME);
+
+        // Remove scheduler object
+        entries.push_back({"scheduler.0", "DEL", {}});
+        schedulerConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ(++current_sai_remove_scheduler_count, sai_remove_scheduler_count);
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_SCHEDULER_TABLE_NAME]).count("scheduler.0"), 0);
+
+        // Remove wred profile object
+        entries.push_back({"AZURE_LOSSLESS_1", "DEL", {}});
+        wredProfileConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ(++current_sai_remove_wred_profile_count, sai_remove_wred_profile_count);
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("AZURE_LOSSLESS_1"), 0);
     }
 
-    TEST_F(QosOrchTest, QosOrchTestPortQosMapReplaceOneField)
+    TEST_F(QosOrchTest, QosOrchTestPortQosMapReplaceOneFieldAndRemoveObject)
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
         Table portQosMapTable = Table(m_config_db.get(), CFG_PORT_QOS_MAP_TABLE_NAME);
@@ -660,7 +712,7 @@ namespace qosorch_test
         consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
         consumer->addToSync(entries);
         entries.clear();
-        // Drain PORT_QOS_MAP_TABLE table
+        // Drain PORT_QOS_MAP table
         static_cast<Orch *>(gQosOrch)->doTask();
         // Dependency is updated
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE_1");
@@ -669,13 +721,41 @@ namespace qosorch_test
         RemoveItem(CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
         auto current_sai_remove_qos_map_count = sai_remove_qos_map_count;
         static_cast<Orch *>(gQosOrch)->doTask();
-        ASSERT_EQ(current_sai_remove_qos_map_count + 1, sai_remove_qos_map_count);
+        ASSERT_EQ(++current_sai_remove_qos_map_count, sai_remove_qos_map_count);
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]).count("AZURE"), 0);
+        // Global dscp to tc map should not be cleared
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE_1"].m_saiObjectId, switch_dscp_to_tc_map_id);
 
         // Check other dependencies are not touched
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "pfc_to_pg_map", CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, "AZURE");
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "pfc_to_queue_map", CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, "AZURE");
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "tc_to_pg_map", CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, "AZURE");
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "tc_to_queue_map", CFG_TC_TO_QUEUE_MAP_TABLE_NAME, "AZURE");
+
+        // Remove port from PORT_QOS_MAP table
+        entries.push_back({"Ethernet0", "DEL", {}});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_PORT_QOS_MAP_TABLE_NAME]).count("Ethernet0"), 0);
+
+        // Make sure the maps can be removed now. Checking anyone should suffice since all the maps are handled in the same way.
+        entries.push_back({"AZURE", "DEL", {}});
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ(++current_sai_remove_qos_map_count, sai_remove_qos_map_count);
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME]).count("AZURE_1"), 0);
+
+        entries.push_back({"AZURE_1", "DEL", {}});
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ(++current_sai_remove_qos_map_count, sai_remove_qos_map_count);
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]).count("AZURE_1"), 0);
+        // Global dscp to tc map should be cleared
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE_1"].m_saiObjectId, SAI_NULL_OBJECT_ID);
     }
 }
