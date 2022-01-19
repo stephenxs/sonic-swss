@@ -250,6 +250,9 @@ void DscpToTcMapHandler::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_obj
         return;
     }
 
+    if (map_id != gQosOrch->m_globalDscpToTcMap)
+        gQosOrch->m_globalDscpToTcMap = map_id;
+
     SWSS_LOG_NOTICE("Applied DSCP_TO_TC QoS map to switch successfully");
 }
 
@@ -287,13 +290,14 @@ bool DscpToTcMapHandler::removeQosItem(sai_object_id_t sai_object)
 {
     SWSS_LOG_ENTER();
 
-    applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, SAI_NULL_OBJECT_ID);
+    if (sai_object == gQosOrch->m_globalDscpToTcMap)
+        applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, SAI_NULL_OBJECT_ID);
 
     SWSS_LOG_DEBUG("Removing DscpToTcMap object:%" PRIx64, sai_object);
     sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to remove map, status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to remove DSCP_TO_TC map, status:%d", sai_status);
         return false;
     }
     return true;
@@ -1517,10 +1521,10 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
             {
                 if(ref_resolve_status::not_resolved == resolve_result)
                 {
-                    SWSS_LOG_INFO("Missing or invalid scheduler reference");
+                    SWSS_LOG_INFO("Missing or invalid wred profile reference");
                     return task_process_status::task_need_retry;
                 }
-                SWSS_LOG_ERROR("Resolving scheduler reference failed");
+                SWSS_LOG_ERROR("Resolving wred profile reference failed");
                 return task_process_status::task_failed;
             }
 
@@ -1699,10 +1703,8 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
                     continue;
                 }
 
-                removeMeFromObjsReferencedByMe(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key, mapRef.first, referenced_obj);
-
                 sai_attribute_t attr;
-                attr.id = qos_to_attr_map[mapRef.first];
+                attr.id = mapRef.second;
                 attr.value.oid = SAI_NULL_OBJECT_ID;
 
                 sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
@@ -1726,6 +1728,8 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
 
             SWSS_LOG_INFO("Disabled PFC on port %s", port_name.c_str());
         }
+
+        removeObject(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key);
 
         return task_process_status::task_success;
     }
