@@ -174,6 +174,13 @@ public:
 
     bool m_fec_cfg = false;
     bool m_an_cfg = false;
+
+    struct SchedulerGroupPortInfo_t
+    {
+        std::vector<sai_object_id_t> groups;
+        std::vector<std::vector<sai_object_id_t>> child_groups;
+        std::vector<bool> group_has_been_initialized;
+    } m_scheduler_group_info;
 };
 
 }

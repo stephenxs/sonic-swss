@@ -188,7 +188,7 @@ private:
 
 private:
     qos_table_handler_map m_qos_handler_map;
-
+/*
     struct SchedulerGroupPortInfo_t
     {
         std::vector<sai_object_id_t> groups;
@@ -196,7 +196,7 @@ private:
         std::vector<bool> group_has_been_initialized;
     };
 
-    std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;
+    std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;*/
     ObjectBulker<sai_port_api_t> m_qosMapBulker;
     ObjectBulker<sai_scheduler_group_api_t> m_schedulerGroupBulker;
     ObjectBulker<sai_queue_api_t> m_queueBulker;

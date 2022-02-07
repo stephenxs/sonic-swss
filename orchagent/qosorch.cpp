@@ -1225,7 +1225,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
 sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id_t queue_id)
 {
     SWSS_LOG_ENTER();
-
+#if 0
     sai_attribute_t attr;
     sai_status_t    sai_status;
 
@@ -1309,9 +1309,10 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             scheduler_group.group_has_been_initialized[ii] = true;
         }
     }
-
+#endif
     /* Lookup groups to which queue belongs */
-    auto& scheduler_group_port_info = m_scheduler_group_port_info[port.m_port_id];
+//    auto& scheduler_group_port_info = m_scheduler_group_port_info[port.m_port_id];
+    auto& scheduler_group_port_info = port.m_scheduler_group_info;
     const auto& groups = scheduler_group_port_info.groups;
     for (uint32_t ii = 0; ii < groups.size() ; ii++)
     {
@@ -1319,6 +1320,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
         const auto& child_groups_per_group = scheduler_group_port_info.child_groups[ii];
         if (child_groups_per_group.empty())
         {
+#if 0
             if (scheduler_group_port_info.group_has_been_initialized[ii])
             {
                 // skip this iteration if it has been initialized which means there're no children in this group
@@ -1365,6 +1367,8 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             }
 
             scheduler_group_port_info.child_groups[ii] = std::move(child_groups);
+#endif
+            SWSS_LOG_ERROR("Got empty child scheduler list for port %s group %d id %" PRIx64, port.m_alias.c_str(), ii, group_id);
         }
 
         for (const auto& child_group_id: child_groups_per_group)
