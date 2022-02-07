@@ -186,6 +186,13 @@ public:
 
     int m_cap_an = -1; /* Capability - AutoNeg, -1 means not set */
     int m_cap_lt = -1; /* Capability - LinkTraining, -1 means not set */
+
+    struct SchedulerGroupPortInfo_t
+    {
+        std::vector<sai_object_id_t> groups;
+        std::vector<std::vector<sai_object_id_t>> child_groups;
+        std::vector<bool> group_has_been_initialized;
+    } m_scheduler_group_info;
 };
 
 }

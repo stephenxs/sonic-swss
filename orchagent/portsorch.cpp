@@ -44,6 +44,7 @@ extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 extern sai_fdb_api_t *sai_fdb_api;
 extern sai_l2mc_group_api_t *sai_l2mc_group_api;
+extern sai_scheduler_group_api_t*  sai_scheduler_group_api;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
@@ -364,7 +365,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 })),
-        m_portBulker(sai_port_api, gSwitchId, gMaxBulkSize)
+        m_portBulker(sai_port_api, gSwitchId, gMaxBulkSize),
+        m_schedulerGroupBulker(sai_scheduler_group_api, gSwitchId, gMaxBulkSize),
+        m_hostifBulker(sai_hostif_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
 
@@ -3254,6 +3257,67 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     it++;
                 }
 
+                for (auto &alias : m_portsPendingBulkGet)
+                {
+                    auto &port = m_portList[alias];
+                    addHostIntfs(port, alias, port.m_hif_id);
+                }
+                m_hostifBulker.flush();
+
+                // Bulk get admin status and speed for ports
+                for (auto &alias : m_portsPendingBulkGet)
+                {
+                    auto &port = m_portList[alias];
+                    m_bulkAttributes.emplace_back();
+                    m_bulkStatuses.emplace_back();
+                    auto &attrAdminState = m_bulkAttributes.back();
+                    attrAdminState.id = SAI_PORT_ATTR_ADMIN_STATE;
+                    m_portBulker.get_entry_attribute(&m_bulkStatuses.back(), port.m_port_id, 1, &attrAdminState);
+
+                    m_bulkAttributes.emplace_back();
+                    m_bulkStatuses.emplace_back();
+                    auto &attrSpeed = m_bulkAttributes.back();
+                    attrSpeed.id = SAI_PORT_ATTR_SPEED;
+                    attrSpeed.value.u32 = 0;
+                    m_portBulker.get_entry_attribute(&m_bulkStatuses.back(), port.m_port_id, 1, &attrSpeed);
+                }
+
+                m_portBulker.flush();
+                uint32_t index = 0;
+                for (auto &alias : m_portsPendingBulkGet)
+                {
+                    auto &port = m_portList[alias];
+                    if (port.m_type != Port::PHY)
+                        continue;
+                    SWSS_LOG_NOTICE("Bulk Got admin status %s %s", alias.c_str(), m_bulkAttributes[index].value.booldata ? "up" : "down");
+                    port.m_admin_state_up = m_bulkAttributes[index].value.booldata;
+                    index ++;
+
+                    SWSS_LOG_NOTICE("Bulk Got speed %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
+                    port.m_speed = m_bulkAttributes[index].value.u32;
+                    index ++;
+                }
+
+                // Set status for host ifs
+                for (auto &alias : m_portsPendingBulkGet)
+                {
+                    auto &port = m_portList[alias];
+                    if (port.m_type != Port::PHY)
+                        continue;
+
+                    m_bulkAttributes.emplace_back();
+                    m_bulkStatuses.emplace_back();
+                    sai_attribute_t &attr = m_bulkAttributes.back();
+                    attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+                    attr.value.booldata = false;
+                    m_hostifBulker.set_entry_attribute(&m_bulkStatuses.back(), port.m_hif_id, &attr);
+                }
+
+                m_hostifBulker.flush();
+
+                m_bulkAttributes.clear();
+                m_bulkStatuses.clear();
+
                 // Initialize port's queues/PGs in bulk mode
                 // Fetch numbers
                 for (auto &alias : m_portsPendingBulkGet)
@@ -3279,24 +3343,49 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     auto &attrHeadroomSize = m_bulkAttributes.back();
                     attrHeadroomSize.id = SAI_PORT_ATTR_QOS_MAXIMUM_HEADROOM_SIZE;
                     m_portBulker.get_entry_attribute(&m_bulkStatuses.back(), port.m_port_id, 1, &attrHeadroomSize);
+
+                    m_bulkAttributes.emplace_back();
+                    m_bulkStatuses.emplace_back();
+                    auto &attrNumberOfSchedulerGroup = m_bulkAttributes.back();
+                    attrNumberOfSchedulerGroup.id = SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS;
+                    m_portBulker.get_entry_attribute(&m_bulkStatuses.back(), port.m_port_id, 1, &attrNumberOfSchedulerGroup);
                 }
                 m_portBulker.flush();
-                uint32_t index = 0;
+                index = 0;
+                auto start_index = static_cast<uint32_t>(m_bulkAttributes.size());
                 for (auto &alias : m_portsPendingBulkGet)
                 {
                     auto &port = m_portList[alias];
                     if (port.m_type != Port::PHY)
                         continue;
-//                    SWSS_LOG_NOTICE("Bulk Got PG count %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
+                    SWSS_LOG_NOTICE("Bulk Got PG count %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
                     // PG count
                     port.m_priority_group_ids.resize(m_bulkAttributes[index].value.u32);
                     index++;
-//                    SWSS_LOG_NOTICE("Bulk Got queue count %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
+                    SWSS_LOG_NOTICE("Bulk Got queue count %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
+                    // Queue count
                     port.m_queue_ids.resize(m_bulkAttributes[index].value.u32);
                     port.m_queue_lock.resize(m_bulkAttributes[index].value.u32);
                     index++;
-//                    SWSS_LOG_NOTICE("Bulk Got headroom size %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
+                    SWSS_LOG_NOTICE("Bulk Got headroom size %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
+                    // Maximum headroom
                     port.m_maximum_headroom = m_bulkAttributes[index].value.u32;
+                    index++;
+                    SWSS_LOG_NOTICE("Bulk Got number of scheduler groups %s %d", alias.c_str(), m_bulkAttributes[index].value.u32);
+                    // Number of scheduler groups
+                    auto &schedulerGroupInfo = port.m_scheduler_group_info;
+                    schedulerGroupInfo.groups.resize(m_bulkAttributes[index].value.u32);
+                    schedulerGroupInfo.child_groups.resize(m_bulkAttributes[index].value.u32);
+                    schedulerGroupInfo.group_has_been_initialized.resize(m_bulkAttributes[index].value.u32);
+
+                    // Fetch scheduler groups
+                    m_bulkAttributes.emplace_back();
+                    m_bulkStatuses.emplace_back();
+                    auto &schedulerGroupsAttr = m_bulkAttributes.back();
+                    schedulerGroupsAttr.id = SAI_PORT_ATTR_QOS_SCHEDULER_GROUP_LIST;
+                    schedulerGroupsAttr.value.objlist.list = schedulerGroupInfo.groups.data();
+                    schedulerGroupsAttr.value.objlist.count = m_bulkAttributes[index].value.u32;
+                    m_portBulker.get_entry_attribute(&m_bulkStatuses.back(), port.m_port_id, 1, &schedulerGroupsAttr);
                     index++;
 
                     initializePriorityGroups(port);
@@ -3305,6 +3394,48 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     initializePortBufferMaximumParameters(port);
                 }
                 m_portBulker.flush();
+
+                // Bulk get child scheduler group count
+                m_bulkStatuses.clear();
+                m_bulkAttributes.clear();
+                for (auto &alias : m_portsPendingBulkGet)
+                {
+                    auto &port = m_portList[alias];
+                    auto &schedulerGroupInfo = port.m_scheduler_group_info;
+                    for (uint32_t ii = 0; ii < schedulerGroupInfo.groups.size(); ii++)
+                    {
+                        m_bulkAttributes.emplace_back();
+                        m_bulkStatuses.emplace_back();
+                        auto &childSchedulerGroups = m_bulkAttributes.back();
+                        childSchedulerGroups.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;
+                        m_schedulerGroupBulker.get_entry_attribute(&m_bulkStatuses.back(), schedulerGroupInfo.groups[ii], 1, &m_bulkAttributes.back());
+                    }
+                }
+                m_schedulerGroupBulker.flush();
+                index = start_index;
+                start_index = static_cast<uint32_t>(m_bulkAttributes.size());
+                // Bulk get child scheduler groups
+                for (auto &alias : m_portsPendingBulkGet)
+                {
+                    auto &port = m_portList[alias];
+                    auto &schedulerGroupInfo = port.m_scheduler_group_info;
+                    for (uint32_t ii = 0; ii < schedulerGroupInfo.groups.size(); ii++)
+                    {
+                        m_bulkAttributes.emplace_back();
+                        m_bulkStatuses.emplace_back();
+                        auto &childSchedulerGroups = m_bulkAttributes.back();
+                        auto &childSchedulerGroupCount = m_bulkAttributes[index++];
+                        SWSS_LOG_NOTICE("Bulk Got number of child scheduler groups %s %d %d", alias.c_str(), ii, childSchedulerGroupCount.value.u32);
+                        schedulerGroupInfo.child_groups[ii].resize(childSchedulerGroupCount.value.u32);
+
+                        childSchedulerGroups.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
+                        childSchedulerGroups.value.objlist.list = schedulerGroupInfo.child_groups[ii].data();
+                        childSchedulerGroups.value.objlist.count = childSchedulerGroupCount.value.u32;
+                        m_schedulerGroupBulker.get_entry_attribute(&m_bulkStatuses.back(), schedulerGroupInfo.groups[ii], 1, &m_bulkAttributes.back());
+                        schedulerGroupInfo.group_has_been_initialized[ii] = true;
+                    }
+                }
+                m_schedulerGroupBulker.flush();
 
                 m_bulkStatuses.clear();
                 m_bulkAttributes.clear();
@@ -4656,21 +4787,10 @@ void PortsOrch::initializePriorityGroups(Port &port)
 
 void PortsOrch::initializePortBufferMaximumParameters(Port &port)
 {
-    sai_attribute_t attr;
     vector<FieldValueTuple> fvVector;
 
-    attr.id = SAI_PORT_ATTR_QOS_MAXIMUM_HEADROOM_SIZE;
-
-    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_NOTICE("Unable to get the maximum headroom for port %s rv:%d, ignored", port.m_alias.c_str(), status);
-    }
-    else
-    {
-        port.m_maximum_headroom = attr.value.u32;
+    if (port.m_maximum_headroom)
         fvVector.emplace_back("max_headroom_size", to_string(port.m_maximum_headroom));
-    }
 
     fvVector.emplace_back("max_priority_groups", to_string(port.m_priority_group_ids.size()));
     fvVector.emplace_back("max_queues", to_string(port.m_queue_ids.size()));
@@ -4689,12 +4809,20 @@ bool PortsOrch::initializePort(Port &port)
 //    initializePortMaximumHeadroom(port);
 //    initializePortBufferMaximumParameters(port);
 
-    /* Create host interface */
+    // Return for now. the rest steps will be done in bulk mode, including
+    // 1. create host intfs
+    // 2. get admin status
+    // 3. get speed
+    // 4. set host intfs operstatus accordingly
+
+    /* Create host interface 
     if (!addHostIntfs(port, port.m_alias, port.m_hif_id))
     {
         SWSS_LOG_ERROR("Failed to create host interface for port %s", port.m_alias.c_str());
         return false;
     }
+will create them in bulk mode
+    */
 
     /* Check warm start states */
     vector<FieldValueTuple> tuples;
@@ -4730,6 +4858,8 @@ bool PortsOrch::initializePort(Port &port)
     {
         port.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
     }
+
+    return true;
 
     /* initialize port admin status */
     if (!getPortAdminStatus(port.m_port_id, port.m_admin_state_up))
@@ -4789,7 +4919,9 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
-    sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    //m_bulkStatuses.emplace_back();
+    /*sai_status_t status = */m_hostifBulker.create_entry(&host_intfs_id, (uint32_t)attrs.size(), attrs.data());
+/*    sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create host interface for port %s", alias.c_str());
@@ -4799,8 +4931,8 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
-    SWSS_LOG_NOTICE("Create host interface for port %s", alias.c_str());
+*/
+    SWSS_LOG_NOTICE("Create host interface for port %s in bulk mode, waiting for flush", alias.c_str());
 
     return true;
 }

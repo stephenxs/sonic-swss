@@ -420,6 +420,8 @@ private:
 
     set<string> m_portsPendingBulkGet;
     ObjectBulker<sai_port_api_t> m_portBulker;
+    ObjectBulker<sai_scheduler_group_api_t> m_schedulerGroupBulker;
+    ObjectBulker<sai_hostif_api_t> m_hostifBulker;
     deque<sai_attribute_t> m_bulkAttributes;
     deque<sai_status_t> m_bulkStatuses;
 };
