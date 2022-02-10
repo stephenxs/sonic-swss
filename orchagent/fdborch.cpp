@@ -24,13 +24,15 @@ extern MlagOrch*        gMlagOrch;
 extern Directory<Orch*> gDirectory;
 
 const int FdbOrch::fdborch_pri = 20;
+extern size_t gMaxBulkSize;
 
 FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables,
     TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector, PortsOrch *port) :
     Orch(applDbConnector, appFdbTables),
     m_portsOrch(port),
     m_fdbStateTable(stateDbFdbConnector.first, stateDbFdbConnector.second),
-    m_mclagFdbStateTable(stateDbMclagFdbConnector.first, stateDbMclagFdbConnector.second)
+    m_mclagFdbStateTable(stateDbMclagFdbConnector.first, stateDbMclagFdbConnector.second),
+    gFdbBulker(sai_fdb_api, gMaxBulkSize)
 {
     for(auto it: appFdbTables)
     {
@@ -848,6 +850,8 @@ void FdbOrch::doTask(Consumer& consumer)
             it = consumer.m_toSync.erase(it);
         }
     }
+    gFdbBulker.flush();
+    object_statuses.clear();
 }
 
 void FdbOrch::doTask(NotificationConsumer& consumer)
@@ -1382,8 +1386,10 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     {
         SWSS_LOG_INFO("MAC-Create %s FDB %s in %s on %s", fdbData.type.c_str(), entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
 
-        status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
-        if (status != SAI_STATUS_SUCCESS)
+//        status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
+        object_statuses.emplace_back();
+        /*sai_status_t status = */gFdbBulker.create_entry(&object_statuses.back(), &fdb_entry, (uint32_t)attrs.size(), attrs.data());
+/*        if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
                     fdbData.type.c_str(), entry.mac.to_string().c_str(),
@@ -1393,7 +1399,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             {
                 return parseHandleSaiStatusFailure(handle_status);
             }
-        }
+            }*/
         port.m_fdb_count++;
         m_portsOrch->setPort(port.m_alias, port);
         vlan.m_fdb_count++;

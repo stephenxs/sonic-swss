@@ -122,6 +122,8 @@ private:
 
     bool storeFdbEntryState(const FdbUpdate& update);
     void notifyTunnelOrch(Port& port);
+    EntityBulker<sai_fdb_api_t>           gFdbBulker;
+    deque<sai_status_t> object_statuses;
 };
 
 #endif /* SWSS_FDBORCH_H */

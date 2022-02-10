@@ -41,6 +41,14 @@ static inline bool operator==(const sai_route_entry_t& a, const sai_route_entry_
         ;
 }
 
+static inline bool operator==(const sai_fdb_entry_t& a, const sai_fdb_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.bv_id == b.bv_id
+        && memcmp(a.mac_address, b.mac_address, sizeof(a.mac_address)) == 0
+        ;
+}
+
 static inline bool operator==(const sai_inseg_entry_t& a, const sai_inseg_entry_t& b)
 {
     return a.switch_id == b.switch_id
@@ -248,6 +256,20 @@ struct SaiBulkerTraits<sai_hostif_api_t>
     using create_entry_fn = sai_create_hostif_fn;
     using remove_entry_fn = sai_remove_hostif_fn;
     using set_entry_attribute_fn = sai_set_hostif_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_object_create_fn;
+    using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+    using bulk_get_entry_attribute_fn = sai_bulk_object_get_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_next_hop_api_t>
+{
+    using entry_t = sai_object_id_t;
+    using api_t = sai_next_hop_api_t;
+    using create_entry_fn = sai_create_next_hop_fn;
+    using remove_entry_fn = sai_remove_next_hop_fn;
+    using set_entry_attribute_fn = sai_set_next_hop_attribute_fn;
     using bulk_create_entry_fn = sai_bulk_object_create_fn;
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
     using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
@@ -650,12 +672,12 @@ inline EntityBulker<sai_fdb_api_t>::EntityBulker(sai_fdb_api_t *api, size_t max_
     max_bulk_size(max_bulk_size)
 {
     // TODO: implement after create_fdb_entries() is available in SAI
-    throw std::logic_error("Not implemented");
-    /*
+//    throw std::logic_error("Not implemented");
+
     create_entries = api->create_fdb_entries;
     remove_entries = api->remove_fdb_entries;
     set_entries_attribute = api->set_fdb_entries_attribute;
-    */
+
 }
 
 template <>
@@ -1173,5 +1195,17 @@ inline ObjectBulker<sai_hostif_api_t>::ObjectBulker(SaiBulkerTraits<sai_hostif_a
     remove_entries = api->remove_hostifs;
     set_entries_attribute = api->set_hostifs_attribute;
     get_entries_attribute = api->get_hostifs_attribute;
+    // TODO: wait until available in SAI
+}
+
+template <>
+inline ObjectBulker<sai_next_hop_api_t>::ObjectBulker(SaiBulkerTraits<sai_next_hop_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_next_hops;
+    remove_entries = api->remove_next_hops;
+    set_entries_attribute = api->set_next_hops_attribute;
+    get_entries_attribute = api->get_next_hops_attribute;
     // TODO: wait until available in SAI
 }

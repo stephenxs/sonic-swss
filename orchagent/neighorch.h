@@ -80,6 +80,7 @@ public:
 
     void resolveNeighbor(const NeighborEntry &);
     void updateSrv6Nexthop(const NextHopKey &, const sai_object_id_t &);
+    void flushNeighbors();
 
 private:
     PortsOrch *m_portsOrch;
@@ -115,6 +116,9 @@ private:
 
     bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
     void clearResolvedNeighborEntry(const NeighborEntry &);
+
+    ObjectBulker<sai_next_hop_api_t> m_nexthopBulker;
+    std::deque<sai_status_t> object_statuses;
 };
 
 #endif /* SWSS_NEIGHORCH_H */

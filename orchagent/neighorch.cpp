@@ -23,13 +23,15 @@ extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 
 const int neighorch_pri = 30;
+extern size_t gMaxBulkSize;
 
 NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb) :
         Orch(appDb, tableName, neighorch_pri),
         m_intfsOrch(intfsOrch),
         m_fdbOrch(fdbOrch),
         m_portsOrch(portsOrch),
-        m_appNeighResolveProducer(appDb, APP_NEIGH_RESOLVE_TABLE_NAME)
+        m_appNeighResolveProducer(appDb, APP_NEIGH_RESOLVE_TABLE_NAME),
+        m_nexthopBulker(sai_next_hop_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
 
@@ -251,7 +253,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     next_hop_attr.value.oid = rif_id;
     next_hop_attrs.push_back(next_hop_attr);
 
-    sai_object_id_t next_hop_id;
+/*    sai_object_id_t next_hop_id;
     sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -262,7 +264,15 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
-    }
+        }*/
+    NextHopEntry next_hop_entry;
+    next_hop_entry.next_hop_id = SAI_NULL_OBJECT_ID;
+    next_hop_entry.ref_count = 0;
+    next_hop_entry.nh_flags = 0;
+    m_syncdNextHops[nexthop] = next_hop_entry;
+
+    object_statuses.emplace_back();
+    m_nexthopBulker.create_entry(&m_syncdNextHops[nexthop].next_hop_id, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
 
     SWSS_LOG_NOTICE("Created next hop %s on %s",
                     nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
@@ -272,12 +282,6 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
         m_neighborToResolve.erase(nexthop);
         SWSS_LOG_INFO("Resolved neighbor for %s", nexthop.to_string().c_str());
     }
-
-    NextHopEntry next_hop_entry;
-    next_hop_entry.next_hop_id = next_hop_id;
-    next_hop_entry.ref_count = 0;
-    next_hop_entry.nh_flags = 0;
-    m_syncdNextHops[nexthop] = next_hop_entry;
 
     m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
 
@@ -778,6 +782,7 @@ void NeighOrch::doTask(Consumer &consumer)
             it = consumer.m_toSync.erase(it);
         }
     }
+    m_nexthopBulker.flush();
 }
 
 bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress &macAddress)
