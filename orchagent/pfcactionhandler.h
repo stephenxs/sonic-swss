@@ -157,6 +157,8 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
                 sai_object_id_t m_zeroEgressBufferPool = SAI_NULL_OBJECT_ID;
                 sai_object_id_t m_zeroIngressBufferProfile = SAI_NULL_OBJECT_ID;
                 sai_object_id_t m_zeroEgressBufferProfile = SAI_NULL_OBJECT_ID;
+
+                bool m_hasCreatedPool;
         };
 
         sai_object_id_t m_originalQueueBufferProfile = SAI_NULL_OBJECT_ID;

@@ -3,6 +3,7 @@
 #include "logger.h"
 #include "sai_serialize.h"
 #include "portsorch.h"
+#include "bufferorch.h"
 #include <vector>
 #include <inttypes.h>
 
@@ -26,6 +27,7 @@
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
 extern AclOrch * gAclOrch;
+extern BufferOrch *gBufferOrch;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_buffer_api_t *sai_buffer_api;
@@ -733,29 +735,38 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createZeroBufferProfile(bool ing
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attribs;
+    sai_status_t status;
+    auto &poolId = getPool(ingress);
 
-    // Create zero pool
-    attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-    attr.value.u64 = 0;
-    attribs.push_back(attr);
+    poolId = gBufferOrch->getBufferPoolId(ingress);
 
-    attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
-    attr.value.u32 = ingress ? SAI_BUFFER_POOL_TYPE_INGRESS : SAI_BUFFER_POOL_TYPE_EGRESS;
-    attribs.push_back(attr);
+    if (poolId == SAI_NULL_OBJECT_ID)
+    {
+        // Create zero pool
+        attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
+        attr.value.u64 = 0;
+        attribs.push_back(attr);
 
-    attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
-    attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_DYNAMIC;
-    attribs.push_back(attr);
+        attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
+        attr.value.u32 = ingress ? SAI_BUFFER_POOL_TYPE_INGRESS : SAI_BUFFER_POOL_TYPE_EGRESS;
+        attribs.push_back(attr);
 
-    sai_status_t status = sai_buffer_api->create_buffer_pool(
-            &getPool(ingress),
+        attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
+        attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_DYNAMIC;
+        attribs.push_back(attr);
+
+        status = sai_buffer_api->create_buffer_pool(
+            &poolId,
             gSwitchId,
             static_cast<uint32_t>(attribs.size()),
             attribs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create dynamic zero buffer pool for PFC WD: %d", status);
-        return;
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create dynamic zero buffer pool for PFC WD: %d", status);
+            return;
+        }
+
+        m_hasCreatedPool = true;
     }
 
     // Create zero profile
@@ -800,9 +811,12 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::destroyZeroBufferProfile(bool in
         return;
     }
 
-    status = sai_buffer_api->remove_buffer_pool(getPool(ingress));
-    if (status != SAI_STATUS_SUCCESS)
+    if (m_hasCreatedPool)
     {
-        SWSS_LOG_ERROR("Failed to remove static zero buffer pool for PFC WD: %d", status);
+        status = sai_buffer_api->remove_buffer_pool(getPool(ingress));
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove static zero buffer pool for PFC WD: %d", status);
+        }
     }
 }

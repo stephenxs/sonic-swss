@@ -318,6 +318,8 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
     string map_type_name = APP_BUFFER_POOL_TABLE_NAME;
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
+    sai_buffer_pool_type_t pool_direction = SAI_BUFFER_POOL_TYPE_INGRESS;
+    sai_buffer_pool_threshold_mode_t pool_mode = SAI_BUFFER_POOL_THRESHOLD_MODE_STATIC;
 
     SWSS_LOG_DEBUG("object name:%s", object_name.c_str());
     if (m_buffer_type_maps[map_type_name]->find(object_name) != m_buffer_type_maps[map_type_name]->end())
@@ -372,6 +374,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                     return task_process_status::task_invalid_entry;
                 }
                 attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
+                pool_direction = static_cast<sai_buffer_pool_type_t>(attr.value.u32);
                 attribs.push_back(attr);
             }
             else if (field == buffer_pool_mode_field_name)
@@ -398,6 +401,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                     SWSS_LOG_ERROR("Unknown pool mode specified:%s", mode.c_str());
                     return task_process_status::task_invalid_entry;
                 }
+                pool_mode = static_cast<sai_buffer_pool_threshold_mode_t>(attr.value.u32);
                 attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
                 attribs.push_back(attr);
             }
@@ -455,6 +459,17 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
             // "FLEX_COUNTER_STATUS"
             m_countersDb->hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
+            if (pool_mode == SAI_BUFFER_POOL_THRESHOLD_MODE_DYNAMIC)
+            {
+                if (pool_direction == SAI_BUFFER_POOL_TYPE_INGRESS)
+                {
+                    m_ingressBufferPools.insert(sai_object);
+                }
+                else
+                {
+                    m_egressBufferPools.insert(sai_object);
+                }
+            }
         }
     }
     else if (op == DEL_COMMAND)
@@ -469,6 +484,10 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
 
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
+            // We don't know whether the pool is ingress or no
+            // Removing it from both pool set is the cheapest way
+            m_ingressBufferPools.erase(sai_object);
+            m_egressBufferPools.erase(sai_object);
             clearBufferPoolWatermarkCounterIdList(sai_object);
             sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
             if (SAI_STATUS_SUCCESS != sai_status)
@@ -1170,4 +1189,13 @@ void BufferOrch::doTask(Consumer &consumer)
                 break;
         }
     }
+}
+
+sai_object_id_t BufferOrch::getBufferPoolId(bool ingress) const
+{
+    auto &bufferPoolSet = ingress ? m_ingressBufferPools : m_egressBufferPools;
+    for (auto &pool : bufferPoolSet)
+        return pool;
+
+    return SAI_NULL_OBJECT_ID;
 }

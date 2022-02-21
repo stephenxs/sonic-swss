@@ -37,6 +37,7 @@ public:
     static type_map m_buffer_type_maps;
     void generateBufferPoolWatermarkCounterIdList(void);
     const object_reference_map &getBufferPoolNameOidMap(void);
+    sai_object_id_t getBufferPoolId(bool direction) const;
 
 private:
     typedef task_process_status (BufferOrch::*buffer_table_handler)(KeyOpFieldsValuesTuple &tuple);
@@ -71,6 +72,9 @@ private:
     unique_ptr<DBConnector> m_countersDb;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
+
+    std::set<sai_object_id_t> m_ingressBufferPools;
+    std::set<sai_object_id_t> m_egressBufferPools;
 };
 #endif /* SWSS_BUFFORCH_H */
 
