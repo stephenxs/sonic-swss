@@ -37,14 +37,14 @@ public:
     static type_map m_buffer_type_maps;
     void generateBufferPoolWatermarkCounterIdList(void);
     const object_reference_map &getBufferPoolNameOidMap(void);
-    sai_object_id_t& getZeroBufferProfile(bool ingress)
+    sai_object_id_t getZeroBufferPool(bool ingress)
     {
-        return ingress ? m_ingressZeroBufferProfile : m_egressZeroBufferProfile;
+        return ingress ? m_ingressZeroBufferPool : m_egressZeroBufferPool;
     }
 
-    void lockZeroBufferProfile(bool ingress);
-    void unlockZeroBufferProfile(bool ingress);
-    void setZeroBufferProfileAndPool(bool direction, sai_object_id_t pool, sai_object_id_t profile);
+    void lockZeroBufferPool(bool ingress);
+    void unlockZeroBufferPool(bool ingress);
+    void setZeroBufferPool(bool direction, sai_object_id_t pool);
 
 private:
     typedef task_process_status (BufferOrch::*buffer_table_handler)(KeyOpFieldsValuesTuple &tuple);
@@ -81,11 +81,9 @@ private:
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
 
     sai_object_id_t m_ingressZeroBufferPool;
-    sai_object_id_t m_ingressZeroBufferProfile;
     sai_object_id_t m_egressZeroBufferPool;
-    sai_object_id_t m_egressZeroBufferProfile;
-    sai_object_id_t m_ingressZeroPoolRefCount;
-    sai_object_id_t m_egressZeroPoolRefCount;
+    int m_ingressZeroPoolRefCount;
+    int m_egressZeroPoolRefCount;
 };
 #endif /* SWSS_BUFFORCH_H */
 

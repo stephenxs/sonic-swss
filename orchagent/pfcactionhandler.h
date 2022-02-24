@@ -143,22 +143,17 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
                 void createZeroBufferProfile(bool ingress);
                 void destroyZeroBufferProfile(bool ingress);
 
-                sai_object_id_t& getProfile(bool ingress);
-                /*                {
-                    return ingress ? m_zeroIngressBufferProfile : m_zeroEgressBufferProfile;
-                    }*/
-
-                sai_object_id_t& getPool(bool ingress)
+                sai_object_id_t& getProfile(bool ingress)
                 {
-                    return ingress ? m_zeroIngressBufferPool : m_zeroEgressBufferPool;
+                    return ingress ? m_zeroIngressBufferProfile : m_zeroEgressBufferProfile;
                 }
+
+                sai_object_id_t& getPool(bool ingress);
 
                 sai_object_id_t m_zeroIngressBufferPool = SAI_NULL_OBJECT_ID;
                 sai_object_id_t m_zeroEgressBufferPool = SAI_NULL_OBJECT_ID;
                 sai_object_id_t m_zeroIngressBufferProfile = SAI_NULL_OBJECT_ID;
                 sai_object_id_t m_zeroEgressBufferProfile = SAI_NULL_OBJECT_ID;
-
-                bool m_hasCreatedPool;
         };
 
         sai_object_id_t m_originalQueueBufferProfile = SAI_NULL_OBJECT_ID;
