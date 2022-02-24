@@ -310,6 +310,73 @@ const object_reference_map &BufferOrch::getBufferPoolNameOidMap(void)
     return *m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME];
 }
 
+void BufferOrch::lockZeroBufferProfile(bool ingress)
+{
+    if (ingress)
+        m_ingressZeroPoolRefCount++;
+    else
+        m_egressZeroPoolRefCount++;
+}
+void BufferOrch::unlockZeroBufferProfile(bool ingress)
+{
+    sai_object_id_t pool = SAI_NULL_OBJECT_ID, profile = SAI_NULL_OBJECT_ID;
+    if (ingress)
+    {
+        if (--m_ingressZeroPoolRefCount <= 0)
+        {
+            pool = m_ingressZeroBufferPool;
+            profile = m_ingressZeroBufferProfile;
+        }
+    }
+    else
+    {
+        if (--m_egressZeroPoolRefCount <= 0)
+        {
+            pool = m_egressZeroBufferPool;
+            profile = m_egressZeroBufferProfile;
+        }
+    }
+
+    if (profile)
+    {
+        auto sai_status = sai_buffer_api->remove_buffer_profile(profile);
+        if (SAI_STATUS_SUCCESS != sai_status)
+        {
+            SWSS_LOG_ERROR("Failed to remove buffer profile, rv:%d", sai_status);
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return;
+            }
+        }
+    }
+    if (pool)
+    {
+        auto sai_status = sai_buffer_api->remove_buffer_pool(pool);
+        if (SAI_STATUS_SUCCESS != sai_status)
+        {
+            SWSS_LOG_ERROR("Failed to remove buffer pool, rv:%d", sai_status);
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return;
+            }
+        }
+    }
+}
+void BufferOrch::setZeroBufferProfileAndPool(bool ingress, sai_object_id_t pool, sai_object_id_t profile)
+{
+    if (ingress)
+    {
+        m_ingressZeroBufferPool = pool;
+        m_ingressZeroBufferProfile = profile;
+    }
+    else
+    {
+        m_egressZeroBufferPool = pool;
+        m_egressZeroBufferProfile = profile;
+    }
+}
 task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
@@ -319,7 +386,8 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
     sai_buffer_pool_type_t pool_direction = SAI_BUFFER_POOL_TYPE_INGRESS;
-    sai_buffer_pool_threshold_mode_t pool_mode = SAI_BUFFER_POOL_THRESHOLD_MODE_STATIC;
+//    sai_buffer_pool_threshold_mode_t pool_mode = SAI_BUFFER_POOL_THRESHOLD_MODE_STATIC;
+    bool zero_size = false;
 
     SWSS_LOG_DEBUG("object name:%s", object_name.c_str());
     if (m_buffer_type_maps[map_type_name]->find(object_name) != m_buffer_type_maps[map_type_name]->end())
@@ -343,6 +411,8 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                 attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
                 attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
+                if (0 == attr.value.u64)
+                    zero_size = true;
             }
             else if (field == buffer_pool_type_field_name)
             {
@@ -401,7 +471,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                     SWSS_LOG_ERROR("Unknown pool mode specified:%s", mode.c_str());
                     return task_process_status::task_invalid_entry;
                 }
-                pool_mode = static_cast<sai_buffer_pool_threshold_mode_t>(attr.value.u32);
+                //pool_mode = static_cast<sai_buffer_pool_threshold_mode_t>(attr.value.u32);
                 attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
                 attribs.push_back(attr);
             }
@@ -441,15 +511,35 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         }
         else
         {
-            sai_status = sai_buffer_api->create_buffer_pool(&sai_object, gSwitchId, (uint32_t)attribs.size(), attribs.data());
-            if (SAI_STATUS_SUCCESS != sai_status)
+            bool created = false;
+            if (zero_size)
             {
-                SWSS_LOG_ERROR("Failed to create buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status);
-                if (handle_status != task_process_status::task_success)
+                if (pool_direction == SAI_BUFFER_POOL_TYPE_INGRESS)
                 {
-                    return handle_status;
+                    sai_object = m_ingressZeroBufferPool;
                 }
+                else if (pool_direction == SAI_BUFFER_POOL_TYPE_EGRESS)
+                {
+                    sai_object = m_egressZeroBufferPool;
+                }
+            }
+            if (SAI_NULL_OBJECT_ID == sai_object)
+            {
+                sai_status = sai_buffer_api->create_buffer_pool(&sai_object, gSwitchId, (uint32_t)attribs.size(), attribs.data());
+                if (SAI_STATUS_SUCCESS != sai_status)
+                {
+                    SWSS_LOG_ERROR("Failed to create buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
+                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
+                }
+                created = true;
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("No need to create buffer pool %s since it has been created", object_name.c_str());
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId = sai_object;
             SWSS_LOG_NOTICE("Created buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
@@ -459,15 +549,15 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
             // "FLEX_COUNTER_STATUS"
             m_countersDb->hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
-            if (pool_mode == SAI_BUFFER_POOL_THRESHOLD_MODE_DYNAMIC)
+            if (zero_size && created)
             {
                 if (pool_direction == SAI_BUFFER_POOL_TYPE_INGRESS)
                 {
-                    m_ingressBufferPools.insert(sai_object);
+                    m_ingressZeroBufferPool = sai_object;
                 }
-                else
+                else if (pool_direction == SAI_BUFFER_POOL_TYPE_EGRESS)
                 {
-                    m_egressBufferPools.insert(sai_object);
+                    m_egressZeroBufferPool = sai_object;
                 }
             }
         }
@@ -486,18 +576,34 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         {
             // We don't know whether the pool is ingress or no
             // Removing it from both pool set is the cheapest way
-            m_ingressBufferPools.erase(sai_object);
-            m_egressBufferPools.erase(sai_object);
             clearBufferPoolWatermarkCounterIdList(sai_object);
-            sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
-            if (SAI_STATUS_SUCCESS != sai_status)
+            bool remove = true;
+            if (sai_object == m_ingressZeroBufferPool)
             {
-                SWSS_LOG_ERROR("Failed to remove buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
-                if (handle_status != task_process_status::task_success)
+                if (m_ingressZeroPoolRefCount > 0)
+                    remove = false;
+            }
+            else if (sai_object == m_egressZeroBufferPool)
+            {
+                if (m_egressZeroPoolRefCount > 0)
+                    remove = false;
+            }
+            if (remove)
+            {
+                sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
+                if (SAI_STATUS_SUCCESS != sai_status)
                 {
-                    return handle_status;
+                    SWSS_LOG_ERROR("Failed to remove buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
+                    task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("Will not remove buffer pool %s since it is still referenced", object_name.c_str());
             }
         }
         SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
@@ -533,6 +639,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
     if (op == SET_COMMAND)
     {
         vector<sai_attribute_t> attribs;
+        sai_object_id_t sai_pool;
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
             string field = fvField(*i);
@@ -549,7 +656,6 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                     continue;
                 }
 
-                sai_object_id_t sai_pool;
                 ref_resolve_status resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_pool_field_name,
                                                     buffer_to_ref_table_map.at(buffer_pool_field_name),
                                                     tuple, sai_pool, pool_name);
@@ -664,18 +770,46 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         }
         else
         {
-            sai_status = sai_buffer_api->create_buffer_profile(&sai_object, gSwitchId, (uint32_t)attribs.size(), attribs.data());
-            if (SAI_STATUS_SUCCESS != sai_status)
+            bool created = false;
+            if (sai_pool == m_ingressZeroBufferPool)
             {
-                SWSS_LOG_ERROR("Failed to create buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-                task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status);
-                if (handle_status != task_process_status::task_success)
+                sai_object = m_ingressZeroBufferProfile;
+                m_ingressZeroPoolRefCount++;
+            }
+            else if (sai_pool == m_egressZeroBufferPool)
+            {
+                sai_object = m_egressZeroBufferProfile;
+                m_egressZeroPoolRefCount++;
+            }
+
+            if (sai_object == SAI_NULL_OBJECT_ID)
+            {
+                created = true;
+                sai_status = sai_buffer_api->create_buffer_profile(&sai_object, gSwitchId, (uint32_t)attribs.size(), attribs.data());
+                if (SAI_STATUS_SUCCESS != sai_status)
                 {
-                    return handle_status;
+                    SWSS_LOG_ERROR("Failed to create buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
+                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId = sai_object;
             SWSS_LOG_NOTICE("Created buffer profile %s with type %s", object_name.c_str(), map_type_name.c_str());
+
+            if (created)
+            {
+                if (sai_pool == m_ingressZeroBufferPool)
+                {
+                    m_ingressZeroBufferProfile = sai_object;
+                }
+                else if (sai_pool == m_egressZeroBufferPool)
+                {
+                    m_egressZeroBufferProfile = sai_object;
+                }
+            }
         }
 
         // Add reference to the buffer pool object
@@ -693,14 +827,32 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
 
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
-            sai_status = sai_buffer_api->remove_buffer_profile(sai_object);
-            if (SAI_STATUS_SUCCESS != sai_status)
+            bool remove = true;
+            if (sai_object == m_ingressZeroBufferProfile)
             {
-                SWSS_LOG_ERROR("Failed to remove buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
-                if (handle_status != task_process_status::task_success)
+                if (--m_ingressZeroPoolRefCount > 0)
                 {
-                    return handle_status;
+                    remove = false;
+                }
+            }
+            else if (sai_object == m_egressZeroBufferProfile)
+            {
+                if (--m_egressZeroPoolRefCount > 0)
+                {
+                    remove = false;
+                }
+            }
+            if (remove)
+            {
+                sai_status = sai_buffer_api->remove_buffer_profile(sai_object);
+                if (SAI_STATUS_SUCCESS != sai_status)
+                {
+                    SWSS_LOG_ERROR("Failed to remove buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
+                    task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
             }
         }
@@ -1189,13 +1341,4 @@ void BufferOrch::doTask(Consumer &consumer)
                 break;
         }
     }
-}
-
-sai_object_id_t BufferOrch::getBufferPoolId(bool ingress) const
-{
-    auto &bufferPoolSet = ingress ? m_ingressBufferPools : m_egressBufferPools;
-    for (auto &pool : bufferPoolSet)
-        return pool;
-
-    return SAI_NULL_OBJECT_ID;
 }
