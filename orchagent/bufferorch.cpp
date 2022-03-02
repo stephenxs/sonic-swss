@@ -330,6 +330,7 @@ void BufferOrch::unlockZeroBufferPool(bool ingress)
         if (--m_ingressZeroPoolRefCount <= 0)
         {
             pool = m_ingressZeroBufferPool;
+            m_ingressZeroBufferPool = SAI_NULL_OBJECT_ID;
         }
     }
     else
@@ -337,6 +338,7 @@ void BufferOrch::unlockZeroBufferPool(bool ingress)
         if (--m_egressZeroPoolRefCount <= 0)
         {
             pool = m_egressZeroBufferPool;
+            m_egressZeroBufferPool = SAI_NULL_OBJECT_ID;
         }
     }
 
@@ -351,6 +353,10 @@ void BufferOrch::unlockZeroBufferPool(bool ingress)
             {
                 return;
             }
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Zero buffer pool has been successfully removed");
         }
     }
 }
@@ -376,7 +382,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
     sai_buffer_pool_type_t pool_direction = SAI_BUFFER_POOL_TYPE_INGRESS;
-    bool zero_pool = false;
+    bool creating_zero_pool = false;
 
     SWSS_LOG_DEBUG("object name:%s", object_name.c_str());
     if (m_buffer_type_maps[map_type_name]->find(object_name) != m_buffer_type_maps[map_type_name]->end())
@@ -387,12 +393,12 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
     SWSS_LOG_DEBUG("processing command:%s", op.c_str());
     if (object_name == "ingress_zero_pool")
     {
-        zero_pool = true;
+        creating_zero_pool = true;
         pool_direction = SAI_BUFFER_POOL_TYPE_INGRESS;
     }
     else if (object_name == "egress_zero_pool")
     {
-        zero_pool = true;
+        creating_zero_pool = true;
         pool_direction = SAI_BUFFER_POOL_TYPE_EGRESS;
     }
 
@@ -411,8 +417,6 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                 attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
                 attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
-                if (0 == attr.value.u64)
-                    zero_pool = true;
             }
             else if (field == buffer_pool_type_field_name)
             {
@@ -444,7 +448,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                     return task_process_status::task_invalid_entry;
                 }
                 attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
-                if (zero_pool && pool_direction != static_cast<sai_buffer_pool_type_t>(attr.value.u32))
+                if (creating_zero_pool && pool_direction != static_cast<sai_buffer_pool_type_t>(attr.value.u32))
                 {
                     SWSS_LOG_ERROR("Wrong pool direction for pool %s", object_name.c_str());
                     return task_process_status::task_invalid_entry;
@@ -514,7 +518,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         }
         else
         {
-            if (zero_pool)
+            if (creating_zero_pool)
             {
                 if (pool_direction == SAI_BUFFER_POOL_TYPE_INGRESS)
                 {
@@ -546,7 +550,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                 SWSS_LOG_NOTICE("No need to create buffer pool %s since it has been created", object_name.c_str());
             }
 
-            if (zero_pool)
+            if (creating_zero_pool)
             {
                 if (pool_direction == SAI_BUFFER_POOL_TYPE_INGRESS)
                 {

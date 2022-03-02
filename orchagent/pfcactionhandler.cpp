@@ -719,6 +719,11 @@ PfcWdZeroBufferHandler::ZeroBufferProfile &PfcWdZeroBufferHandler::ZeroBufferPro
 
 sai_object_id_t& PfcWdZeroBufferHandler::ZeroBufferProfile::getPool(bool ingress)
 {
+    // If there is a cached zero buffer pool, just use it
+    // else fetch zero buffer pool from buffer orch
+    // If there is one, use it and increase the reference number.
+    // otherwise, just return NULL OID
+    // PfcWdZeroBufferHandler will create it later and notify buffer orch later
     auto &poolId = ingress ? m_zeroIngressBufferPool : m_zeroEgressBufferPool;
     if (poolId == SAI_NULL_OBJECT_ID)
     {
