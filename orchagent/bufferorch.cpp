@@ -342,7 +342,7 @@ void BufferOrch::unlockZeroBufferPool(bool ingress)
         }
     }
 
-    if (pool)
+    if (pool != SAI_NULL_OBJECT_ID)
     {
         auto sai_status = sai_buffer_api->remove_buffer_pool(pool);
         if (SAI_STATUS_SUCCESS != sai_status)
