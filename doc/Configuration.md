@@ -34,6 +34,7 @@ Table of Contents
          * [MAP_PFC_PRIORITY_TO_QUEUE](#map_pfc_priority_to_queue)  
          * [NTP Global Configuration](#ntp-global-configuration)  
          * [NTP and SYSLOG servers](#ntp-and-syslog-servers)  
+         * [Policer](#policer)   
          * [Port](#port)   
          * [Port Channel](#port-channel)  
          * [Portchannel member](#portchannel-member)  
@@ -1047,7 +1048,7 @@ This option sets the port which ntp will choose to send time update requests fro
 NOTE: If a Loopback interface is defined on the switch ntp will choose this by default, so this setting
 is **required** if the switch has a Loopback interface and the ntp peer does not have defined routes
 for that address.
- 
+
 ```
 {
 "NTP": {
@@ -1092,6 +1093,50 @@ attributes in those objects.
 }
 ```
 
+### Policer
+
+Below is an example of the policer table configuration.
+```
+{
+    "POLICER": {
+        "everflow_static_policer": {
+            "meter_type": "bytes",
+            "mode": "sr_tcm",
+            "cir": "12500000",
+            "cbs": "12500000",
+	    "pir": "17500000",
+            "pbs": "17500000",
+            "color": "aware",
+            "red_packet_action": "drop",
+	    "yellow_packet_action": "drop"
+	    "green_packet_action": "forward"
+       }
+    }
+}
+
+```
+Key to the table defines policer name Below are the fields
+-   meter_type - Mandatory field. Defines how the metering is done. values - bytes, packets
+-   mode - Mandatory field. Defines one of the three modes support. values - sr_tcm, tr_tcm, storm
+-   cir  - Committed information rate bytes/sec or packets/sec based on meter_type
+-   cbs - Committed burst size in bytes or packets based on meter_type
+-   pir - Peak information rate in bytes/sec or packets/sec based on meter_type
+-   pbs - Peak burst size in bytes or packets based on meter_type
+-   color - Defines the color source for the policer. values - aware, blind
+-   red_packet_action - Defines the action to be taken for red color packets
+-   yellow_packet_action - Defines the action to be taken for yellow color packets
+-   green_packet_action - Defines the action to be taken for green color packets.
+
+The packet action could be:
+
+-   'drop'
+-   'forward'
+-   'copy'
+-   'copy_cancel'
+-   'trap'
+-   'log'
+-   'deny'
+-   'transit'
 ### Port
 
 In this table the physical port configurations are defined. Each object
@@ -1452,6 +1497,29 @@ The list of root ports, all possible breakout modes, and default breakout modes
     },
     "Ethernet124": {
         "brkout_mode": "2x50G"
+    }
+}
+```
+
+### AAA
+
+The AAA table defined the method SONiC used for Authentication, Authorization and Accounting.
+The method could be:
+-   default
+-   local
+-   tacacs+
+-   radius
+
+```
+"AAA": {
+    "authentication": {
+       "login": "local"
+    },
+    "authorization": {
+       "login": "local"
+    },
+    "accounting": {
+       "login": "local"
     }
 }
 ```
