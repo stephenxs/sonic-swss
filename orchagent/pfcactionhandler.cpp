@@ -824,7 +824,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::destroyZeroBufferProfile(bool in
 {
     SWSS_LOG_ENTER();
 
-    if (sai_buffer_api != NULL)
+    if (getProfile(ingress) != SAI_NULL_OBJECT_ID)
     {
         sai_status_t status = sai_buffer_api->remove_buffer_profile(getProfile(ingress));
         if (status != SAI_STATUS_SUCCESS)
@@ -832,7 +832,11 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::destroyZeroBufferProfile(bool in
             SWSS_LOG_ERROR("Failed to remove static zero buffer profile for PFC WD: %d", status);
             return;
         }
+    }
 
+    auto &pool = ingress ? m_zeroIngressBufferPool : m_zeroEgressBufferPool;
+    if (pool != SAI_NULL_OBJECT_ID)
+    {
         gBufferOrch->unlockZeroBufferPool(ingress);
     }
 }
