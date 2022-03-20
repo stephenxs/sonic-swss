@@ -112,6 +112,11 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
     if (QosOrch::getTypeMap()[qos_map_type_name]->find(qos_object_name) != QosOrch::getTypeMap()[qos_map_type_name]->end())
     {
         sai_object = (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId;
+        if ((*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_pendingRemove && op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Entry %s %s is pending remove, need retry", qos_map_type_name.c_str(), qos_object_name.c_str());
+            return task_process_status::task_need_retry;
+        }
     }
     if (op == SET_COMMAND)
     {
@@ -140,6 +145,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
                 return task_process_status::task_failed;
             }
             (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
+            (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_pendingRemove = false;
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
         }
         freeAttribResources(attributes);
@@ -155,6 +161,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
         {
             auto hint = gQosOrch->objectReferenceInfo(QosOrch::getTypeMap(), qos_map_type_name, qos_object_name);
             SWSS_LOG_NOTICE("Can't remove object %s due to being referenced (%s)", qos_object_name.c_str(), hint.c_str());
+            (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_pendingRemove = true;
             return task_process_status::task_need_retry;
         }
         if (!removeQosItem(sai_object))
@@ -1124,6 +1131,11 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             SWSS_LOG_ERROR("Error sai_object must exist for key %s", qos_object_name.c_str());
             return task_process_status::task_invalid_entry;
         }
+        if ((*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_pendingRemove && op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Entry %s %s is pending remove, need retry", qos_map_type_name.c_str(), qos_object_name.c_str());
+            return task_process_status::task_need_retry;
+        }
     }
     if (op == SET_COMMAND)
     {
@@ -1231,6 +1243,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             }
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
             (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
+            (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_pendingRemove = false;
         }
     }
     else if (op == DEL_COMMAND)
@@ -1244,6 +1257,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
         {
             auto hint = gQosOrch->objectReferenceInfo(QosOrch::getTypeMap(), qos_map_type_name, qos_object_name);
             SWSS_LOG_NOTICE("Can't remove object %s due to being referenced (%s)", qos_object_name.c_str(), hint.c_str());
+            (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_pendingRemove = true;
             return task_process_status::task_need_retry;
         }
         sai_status = sai_scheduler_api->remove_scheduler(sai_object);
