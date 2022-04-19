@@ -24,6 +24,8 @@ namespace portsorch_test
     sai_queue_api_t *pold_sai_queue_api;
     sai_buffer_api_t ut_sai_buffer_api;
     sai_buffer_api_t *pold_sai_buffer_api;
+    sai_port_api_t ut_sai_port_api;
+    sai_port_api_t *pold_sai_port_api;
 
     string _ut_stub_queue_key;
     sai_status_t _ut_stub_sai_get_queue_attribute(
@@ -89,6 +91,32 @@ namespace portsorch_test
         return status;
     }
 
+    bool testing_fec;
+    vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
+
+    sai_status_t _ut_stub_sai_get_port_attribute(
+        _In_ sai_object_id_t port_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        sai_status_t status;
+        if (testing_fec && attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_SUPPORTED_FEC_MODE)
+        {
+            uint32_t i;
+            for (i = 0; i < attr_list[0].value.s32list.count && i < mock_port_fec_modes.size(); i++)
+            {
+                attr_list[0].value.s32list.list[i] = mock_port_fec_modes[i];
+            }
+            attr_list[0].value.s32list.count = i;
+            status = SAI_STATUS_SUCCESS;
+        }
+        else
+        {
+            status = pold_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
+        }
+        return status;
+    }
+
     void _hook_sai_buffer_and_queue_api()
     {
         ut_sai_buffer_api = *sai_buffer_api;
@@ -102,12 +130,18 @@ namespace portsorch_test
         pold_sai_queue_api = sai_queue_api;
         ut_sai_queue_api.get_queue_attribute = _ut_stub_sai_get_queue_attribute;
         sai_queue_api = &ut_sai_queue_api;
+
+        ut_sai_port_api = *sai_port_api;
+        pold_sai_port_api = sai_port_api;
+        ut_sai_port_api.get_port_attribute = _ut_stub_sai_get_port_attribute;
+        sai_port_api = &ut_sai_port_api;
     }
 
     void _unhook_sai_buffer_and_queue_api()
     {
         sai_buffer_api = pold_sai_buffer_api;
         sai_queue_api = pold_sai_queue_api;
+        sai_port_api = pold_sai_port_api;
     }
 
     void clear_pfcwd_zero_buffer_handler()
@@ -271,6 +305,61 @@ namespace portsorch_test
         }
 
     };
+
+    TEST_F(PortsOrchTest, PortSupportedFecModes)
+    {
+        _hook_sai_buffer_and_queue_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        testing_fec = true;
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"fec", "rs"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        vector<string> ts;
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"fec", "none"}
+                           }});
+        consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 1);
+        ASSERT_EQ(ts[0], "PORT_TABLE:Ethernet0|SET|fec:none");
+
+        testing_fec = false;
+        _unhook_sai_buffer_and_queue_api();
+    }
 
     TEST_F(PortsOrchTest, PortReadinessColdBoot)
     {

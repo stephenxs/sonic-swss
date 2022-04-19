@@ -77,6 +77,13 @@ static map<string, sai_port_fec_mode_t> fec_mode_map =
     { "fc", SAI_PORT_FEC_MODE_FC }
 };
 
+static map<sai_port_fec_mode_t, string> fec_mode_reverse_map =
+{
+    { SAI_PORT_FEC_MODE_NONE, "none" },
+    { SAI_PORT_FEC_MODE_RS, "rs"  },
+    { SAI_PORT_FEC_MODE_FC, "fc"  }
+};
+
 static map<string, sai_port_priority_flow_control_mode_t> pfc_asym_map =
 {
     { "on", SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE },
@@ -1139,6 +1146,25 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
 {
     SWSS_LOG_ENTER();
 
+    auto searchRef = m_portSupportedFecModes.find(port.m_port_id);
+    if (searchRef != m_portSupportedFecModes.end())
+    {
+        auto &supportedFecModes = searchRef->second;
+        bool found = false;
+        for (auto supportedFecMode : supportedFecModes)
+        {
+            if (mode == supportedFecMode)
+            {
+                found = true;
+            }
+        }
+        if (!found)
+        {
+            SWSS_LOG_ERROR("Unsupported mode %d on port %" PRIx64, mode, port.m_port_id);
+            return false;
+        }
+    }
+
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_FEC_MODE;
     attr.value.s32 = mode;
@@ -1928,6 +1954,76 @@ void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_
     vector<FieldValueTuple> v;
     std::string supported_speeds_str = swss::join(',', supported_speeds.begin(), supported_speeds.end());
     v.emplace_back(std::make_pair("supported_speeds", supported_speeds_str));
+    m_portStateTable.set(alias, v);
+}
+
+void PortsOrch::getPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id, PortSupportedFecModes &supported_fecmodes)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+    const auto size = fec_mode_reverse_map.size();
+
+    PortSupportedFecModes fecModes(size);
+
+    attr.id = SAI_PORT_ATTR_SUPPORTED_FEC_MODE;
+    attr.value.s32list.count = static_cast<uint32_t>(fecModes.size());
+    attr.value.s32list.list = fecModes.data();
+
+    status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        fecModes.resize(attr.value.u32list.count);
+        supported_fecmodes.swap(fecModes);
+    }
+    else
+    {
+        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+            SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+            status == SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            // unable to validate FEC mode if attribute is not supported on platform
+            SWSS_LOG_NOTICE("Unable to validate FEC mode for port %s id=%" PRIx64 " due to unsupported by platform",
+                            alias.c_str(), port_id);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to get a list of supported FEC modes for port %s id=%" PRIx64 ". Error=%d",
+                           alias.c_str(), port_id, status);
+        }
+
+        supported_fecmodes.clear(); // return empty
+    }
+}
+
+void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id)
+{
+    // If port supported speeds map already contains the information, save the SAI call
+    if (m_portSupportedFecModes.count(port_id))
+    {
+        return;
+    }
+    PortSupportedFecModes supported_fec_modes;
+    getPortSupportedFecModes(alias, port_id, supported_fec_modes);
+    m_portSupportedFecModes[port_id] = supported_fec_modes;
+    vector<FieldValueTuple> v;
+    std::string supported_fec_modes_str;
+    if (!supported_fec_modes.empty())
+    {
+        bool first = true;
+        for(auto fec : supported_fec_modes)
+        {
+            if (first)
+                first = false;
+            else
+                supported_fec_modes_str += ',';
+            supported_fec_modes_str += fec_mode_reverse_map[static_cast<sai_port_fec_mode_t>(fec)];
+        }
+    }
+    else
+    {
+        supported_fec_modes_str = "N/A";
+    }
+    v.emplace_back(std::make_pair("supported_fecs", supported_fec_modes_str));
     m_portStateTable.set(alias, v);
 }
 
@@ -2924,6 +3020,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
 
                     initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[it->first]);
+                    initPortSupportedFecModes(get<0>(it->second), m_portListLaneMap[it->first]);
                     it++;
                 }
 
