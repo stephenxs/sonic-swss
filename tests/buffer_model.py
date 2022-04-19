@@ -1,8 +1,16 @@
 import re
 import time
 
+def initialize_lossless_parameters(config_db, cmd_runner):
+    default_lossless_param = {'default_dynamic_th': '0'}
+    config_db.update_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE', default_lossless_param)
+
+    lossless_traffic_pattern = {'mtu': '1024', 'small_packet_percentage': '100'}
+    config_db.update_entry('LOSSLESS_TRAFFIC_PATTERN', 'AZURE', lossless_traffic_pattern)
+
+
 lossless_profile_name_pattern = 'pg_lossless_([1-9][0-9]*000)_([1-9][0-9]*m)_profile'
-def enable_dynamic_buffer(config_db, cmd_runner):
+def enable_dynamic_buffer(config_db, cmd_runner, full_init=True):
     # check whether it's already running dynamic mode
     device_meta = config_db.get_entry('DEVICE_METADATA', 'localhost')
     assert 'buffer_model' in device_meta, "'buffer_model' doesn't exist in DEVICE_METADATA|localhost"
@@ -43,11 +51,8 @@ def enable_dynamic_buffer(config_db, cmd_runner):
             if re.search(lossless_profile_name_pattern, key):
                 assert False, "dynamically generated profile still exists"
 
-        default_lossless_param = {'default_dynamic_th': '0'}
-        config_db.update_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE', default_lossless_param)
-
-        lossless_traffic_pattern = {'mtu': '1024', 'small_packet_percentage': '100'}
-        config_db.update_entry('LOSSLESS_TRAFFIC_PATTERN', 'AZURE', lossless_traffic_pattern)
+        if full_init:
+            initialize_lossless_parameters(config_db, cmd_runner)
     finally:
         # restart daemon
         cmd_runner("supervisorctl restart buffermgrd")

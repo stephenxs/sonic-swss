@@ -875,10 +875,8 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
     }
 
     vector<FieldValueTuple> fvVector;
-    string mode = getPgPoolMode();
 
-    // profile threshold field name
-    mode += "_th";
+    const string &&mode = profile.threshold_mode.empty() ? getPgPoolMode() + "_th" : profile.threshold_mode;
 
     if (profile.lossless)
     {
@@ -1430,9 +1428,9 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
         return task_process_status::task_success;
     }
 
-    if (!m_bufferPoolReady)
+    if (!m_bufferPoolReady || m_defaultThreshold.empty())
     {
-        SWSS_LOG_INFO("Nothing to be done since the buffer pool is not ready");
+        SWSS_LOG_INFO("Nothing to be done since either the buffer pool or default threshold is not ready");
         return task_process_status::task_success;
     }
 
@@ -1454,6 +1452,12 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
 
         if (portPg.dynamic_calculated)
         {
+            if (speed.empty())
+            {
+                SWSS_LOG_INFO("Nothing to be done for %s since no speed configured", key.c_str());
+                continue;
+            }
+
             string threshold;
             // Calculate new headroom size
             if (portPg.static_configured)
@@ -1909,6 +1913,10 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFiel
                 SWSS_LOG_DEBUG("Handling Buffer parameter table field over_subscribe_ratio value %s", fvValue(i).c_str());
             }
         }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        newRatio = "";
     }
     else
     {
@@ -2432,6 +2440,20 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                     }
                     profileApp.pool_name = poolName;
                     profileApp.direction = poolRef->second.direction;
+                    auto threshold_mode = poolRef->second.mode + "_th";
+                    if (profileApp.threshold_mode.empty())
+                    {
+                        profileApp.threshold_mode = threshold_mode;
+                    }
+                    else if (profileApp.threshold_mode != threshold_mode)
+                    {
+                        SWSS_LOG_ERROR("Buffer profile %s's mode %s doesn't match with buffer pool %s whose mode is %s",
+                                       profileName.c_str(),
+                                       profileApp.threshold_mode.c_str(),
+                                       poolName.c_str(),
+                                       threshold_mode.c_str());
+                        return task_process_status::task_failed;
+                    }
                 }
                 else
                 {
@@ -2456,12 +2478,21 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
             {
                 profileApp.size = value;
             }
-            else if (field == buffer_dynamic_th_field_name)
+            else if (field == buffer_dynamic_th_field_name || field == buffer_static_th_field_name)
             {
-                profileApp.threshold = value;
-            }
-            else if (field == buffer_static_th_field_name)
-            {
+                if (profileApp.threshold_mode.empty())
+                {
+                    profileApp.threshold_mode = field;
+                }
+                else if (profileApp.threshold_mode != field)
+                {
+                    SWSS_LOG_ERROR("Buffer profile %s's mode %s doesn't align with buffer pool %s whose mode is %s",
+                                   profileName.c_str(),
+                                   field.c_str(),
+                                   profileApp.pool_name.c_str(),
+                                   profileApp.threshold_mode.c_str());
+                    return task_process_status::task_failed;
+                }
                 profileApp.threshold = value;
             }
             else if (field == buffer_headroom_type_field_name)
@@ -3189,6 +3220,7 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
         {
             case task_process_status::task_failed:
                 SWSS_LOG_ERROR("Failed to process table update");
+                it = consumer.m_toSync.erase(it);
                 return;
             case task_process_status::task_need_retry:
                 SWSS_LOG_INFO("Unable to process table update. Will retry...");
@@ -3238,7 +3270,7 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
  */
 void BufferMgrDynamic::handlePendingBufferObjects()
 {
-    if (m_bufferPoolReady)
+    if (m_bufferPoolReady && !m_defaultThreshold.empty())
     {
         if (!m_pendingApplyZeroProfilePorts.empty())
         {

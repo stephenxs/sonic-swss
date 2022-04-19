@@ -11,7 +11,6 @@ def dynamic_buffer(dvs):
     yield
     buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
 
-
 @pytest.mark.usefixtures("dynamic_buffer")
 class TestBufferMgrDyn(object):
     DEFAULT_POLLING_CONFIG = PollingConfig(polling_interval=0.01, timeout=60, strict=True)
@@ -129,16 +128,18 @@ class TestBufferMgrDyn(object):
         if fvs.get('dynamic_th'):
             sai_threshold_value = fvs['dynamic_th']
             sai_threshold_mode = 'SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC'
+            sai_threshold_name = 'SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH'
         else:
             sai_threshold_value = fvs['static_th']
             sai_threshold_mode = 'SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC'
+            sai_threshold_name = 'SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH'
         self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", self.newProfileInAsicDb,
                                              {'SAI_BUFFER_PROFILE_ATTR_XON_TH': fvs['xon'],
                                               'SAI_BUFFER_PROFILE_ATTR_XOFF_TH': fvs['xoff'],
                                               'SAI_BUFFER_PROFILE_ATTR_RESERVED_BUFFER_SIZE': fvs['size'],
                                               'SAI_BUFFER_PROFILE_ATTR_POOL_ID': self.ingress_lossless_pool_oid,
                                               'SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE': sai_threshold_mode,
-                                              'SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH': sai_threshold_value},
+                                              sai_threshold_name: sai_threshold_value},
                                           self.DEFAULT_POLLING_CONFIG)
 
     def make_lossless_profile_name(self, speed, cable_length, mtu = None, dynamic_th = None):
@@ -778,3 +779,73 @@ class TestBufferMgrDyn(object):
         assert int(fvs["max_queues"]) and int(fvs["max_priority_groups"])
 
         self.cleanup_db(dvs)
+
+    def test_startBufferManagerWithoutLosslessParameter(self, dvs, testlog):
+        buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+        buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd, False)
+        time.sleep(5)
+
+        self.setup_db(dvs)
+
+        expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
+
+        # Startup interface
+        dvs.port_admin_set('Ethernet0', 'up')
+
+        # Configure lossless PG 3-4 on interface
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
+
+        # No lossless profile created
+        time.sleep(5)
+        self.app_db.wait_for_deleted_entry('BUFFER_PROFILE_TABLE', expectedProfile)
+
+        # Initialize lossless parameters
+        buffer_model.initialize_lossless_parameters(dvs.get_config_db(), dvs.runcmd)
+        time.sleep(15)
+
+        # Make sure lossless profile created
+        self.app_db.wait_for_entry('BUFFER_PROFILE_TABLE', expectedProfile)
+        self.app_db.wait_for_field_match('BUFFER_PG_TABLE', 'Ethernet0:3-4', {'profile': expectedProfile})
+
+        # Shutdown interface
+        dvs.port_admin_set('Ethernet0', 'down')
+
+        self.cleanup_db(dvs)
+
+    def test_bufferProfileMismatchThreshold(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # Startup interface
+        dvs.port_admin_set('Ethernet0', 'up')
+
+        # Create a new pool with static threshold
+        self.config_db.update_entry('BUFFER_POOL', 'test-pool',
+                                    {'mode': 'static',
+                                     'type': 'ingress',
+                                     'size': '0'})
+
+        # Create a new profile based on the pool but with different threshold mode
+        self.config_db.update_entry('BUFFER_PROFILE', 'test-profile',
+                                    {'dynamic_th': '0',
+                                     'size': '0',
+                                     'pool': 'test-pool'})
+
+        # Make sure the profile has not been created because of threshold mismatching
+        time.sleep(5)
+        self.app_db.wait_for_deleted_entry('BUFFER_PROFILE_TABLE', 'test-profile')
+
+        # Remove the profile whose threshold mode mismatches
+        self.config_db.delete_entry('BUFFER_PROFILE', 'test-profile')
+
+        # Re-add the profile with the correct threshold
+        self.config_db.update_entry('BUFFER_PROFILE', 'test-profile',
+                                    {'static_th': '0',
+                                     'size': '0',
+                                     'pool': 'test-pool'})
+        self.app_db.wait_for_entry('BUFFER_PROFILE_TABLE', 'test-profile')
+
+        # Clean up
+        self.config_db.delete_entry('BUFFER_PROFILE', 'test-profile')
+        self.config_db.delete_entry('BUFFER_POOL', 'test-pool')
+        self.app_db.wait_for_deleted_entry('BUFFER_PROFILE_TABLE', 'test-profile')
+        self.app_db.wait_for_deleted_entry('BUFFER_POOL_TABLE', 'test-pool')
