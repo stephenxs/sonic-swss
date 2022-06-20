@@ -28,7 +28,12 @@
 #define PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_DROP_STAT_COUNTER"
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
-typedef std::vector<sai_int32_t> PortSupportedFecModes;
+typedef struct
+{
+    std::vector<sai_int32_t> fecModes;
+    // unknown is true in case fetching SAI_PORT_ATTR_SUPPORTED_FEC_MODE is not supported by vendor SAI
+    bool unknown;
+} PortSupportedFecModes;
 
 static const map<sai_port_oper_status_t, string> oper_status_strings =
 {

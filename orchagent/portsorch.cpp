@@ -1150,10 +1150,10 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
     if (searchRef != m_portSupportedFecModes.end())
     {
         auto &supportedFecModes = searchRef->second;
-        if (!supportedFecModes.empty())
+        if (!supportedFecModes.unknown)
         {
             bool found = false;
-            for (auto supportedFecMode : supportedFecModes)
+            for (auto supportedFecMode : supportedFecModes.fecModes)
             {
                 if (mode == supportedFecMode)
                 {
@@ -1964,9 +1964,7 @@ void PortsOrch::getPortSupportedFecModes(const std::string& alias, sai_object_id
 {
     sai_attribute_t attr;
     sai_status_t status;
-    const auto size = fec_mode_reverse_map.size();
-
-    PortSupportedFecModes fecModes(size);
+    auto &fecModes = supported_fecmodes.fecModes;
 
     attr.id = SAI_PORT_ATTR_SUPPORTED_FEC_MODE;
     attr.value.s32list.count = static_cast<uint32_t>(fecModes.size());
@@ -1976,7 +1974,7 @@ void PortsOrch::getPortSupportedFecModes(const std::string& alias, sai_object_id
     if (status == SAI_STATUS_SUCCESS)
     {
         fecModes.resize(attr.value.u32list.count);
-        supported_fecmodes.swap(fecModes);
+        supported_fecmodes.unknown = false;
     }
     else
     {
@@ -1994,7 +1992,8 @@ void PortsOrch::getPortSupportedFecModes(const std::string& alias, sai_object_id
                            alias.c_str(), port_id, status);
         }
 
-        supported_fecmodes.clear(); // return empty
+        fecModes.clear(); // return empty
+        supported_fecmodes.unknown = true;
     }
 }
 
@@ -2006,14 +2005,15 @@ void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_i
         return;
     }
     PortSupportedFecModes supported_fec_modes;
+    supported_fec_modes.fecModes.resize(fec_mode_reverse_map.size());
     getPortSupportedFecModes(alias, port_id, supported_fec_modes);
     m_portSupportedFecModes[port_id] = supported_fec_modes;
     vector<FieldValueTuple> v;
     std::string supported_fec_modes_str;
-    if (!supported_fec_modes.empty())
+    if (!supported_fec_modes.fecModes.empty())
     {
         bool first = true;
-        for(auto fec : supported_fec_modes)
+        for(auto fec : supported_fec_modes.fecModes)
         {
             if (first)
                 first = false;
