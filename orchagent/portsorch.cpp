@@ -1150,18 +1150,21 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
     if (searchRef != m_portSupportedFecModes.end())
     {
         auto &supportedFecModes = searchRef->second;
-        bool found = false;
-        for (auto supportedFecMode : supportedFecModes)
+        if (!supportedFecModes.empty())
         {
-            if (mode == supportedFecMode)
+            bool found = false;
+            for (auto supportedFecMode : supportedFecModes)
             {
-                found = true;
+                if (mode == supportedFecMode)
+                {
+                    found = true;
+                }
             }
-        }
-        if (!found)
-        {
-            SWSS_LOG_ERROR("Unsupported mode %d on port %" PRIx64, mode, port.m_port_id);
-            return false;
+            if (!found)
+            {
+                SWSS_LOG_ERROR("Unsupported mode %d on port %" PRIx64, mode, port.m_port_id);
+                return false;
+            }
         }
     }
 
