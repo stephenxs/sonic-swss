@@ -2008,6 +2008,15 @@ void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_i
     supported_fec_modes.fecModes.resize(fec_mode_reverse_map.size());
     getPortSupportedFecModes(alias, port_id, supported_fec_modes);
     m_portSupportedFecModes[port_id] = supported_fec_modes;
+
+    if (supported_fec_modes.unknown)
+    {
+        // Do not expose "supported_fecs" in case fetching FEC modes is not supported by the vendor
+        SWSS_LOG_INFO("No supported_fecs exposed to STATE_DB for port %s since fetching supported FEC modes is not supported by the vendor",
+                      alias.c_str());
+        return;
+    }
+
     vector<FieldValueTuple> v;
     std::string supported_fec_modes_str;
     if (!supported_fec_modes.fecModes.empty())
