@@ -1145,8 +1145,28 @@ bool PortsOrch::setPortTpid(sai_object_id_t id, sai_uint16_t tpid)
     return true;
 }
 
-
-bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
+/*
+ * Originally, setPortFec returns
+ *   -  true only if setting FEC modes succeeds
+ *   -  false in case SAI return need_retry
+ * Now, it returns true in case the to-be-configured FEC mode is not supported on the port
+ * We do not returen false here because of the logic to set FEC in doTask when port's admin_status is up:
+ *   - Set port's admin_state to down
+ *   - Call setPortFec
+ *   - If it returns true, set port's admin_state to up
+ *   - Otherwise, skip the reset handling of this port, which means the port's admin_status keeps down
+ *     and it will be up only after setPortFec returns true after retrying
+ *     Originally, it hits this logic only if SAI returns need_retry in a racing condition,
+ *     which means it lasts only for a short period of time.
+ *     Now, it can hit the logic in case user configured a not-supported FEC mode and the function returned false in this case
+ *     It depends on user to re-configure it, which means the port's admin_status can be down for a relatively long time
+ *     To avoid that, setPortFec returns true in this case, making admin_status to be up
+ *
+ * The log message has also been moved from doTask to setPortFec because it is confusing to print "setting successful" in doTask
+ * in case setPortFec returns true when the FEC mode is not supported but "setting failed" in setPortFec
+ * Arguments of the function have been adjusted accordingly.
+ **/
+bool PortsOrch::setPortFec(Port &port, string &mode)
 {
     SWSS_LOG_ENTER();
 
@@ -1159,27 +1179,27 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
             bool found = false;
             for (auto supportedFecMode : supportedFecModes.fecModes)
             {
-                if (mode == supportedFecMode)
+                if (port.m_fec_mode == supportedFecMode)
                 {
                     found = true;
                 }
             }
             if (!found)
             {
-                SWSS_LOG_ERROR("Unsupported mode %d on port %" PRIx64, mode, port.m_port_id);
-                return false;
+                SWSS_LOG_ERROR("Unsupported mode %s on port %s", mode.c_str(), port.m_alias.c_str());
+                return true;
             }
         }
     }
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_FEC_MODE;
-    attr.value.s32 = mode;
+    attr.value.s32 = port.m_fec_mode;
 
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set fec mode %d to port pid:%" PRIx64, mode, port.m_port_id);
+        SWSS_LOG_ERROR("Failed to set FEC mode %s to port %s", mode.c_str(), port.m_alias.c_str());
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
@@ -1187,7 +1207,7 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
         }
     }
 
-    SWSS_LOG_INFO("Set fec mode %d to port pid:%" PRIx64, mode, port.m_port_id);
+    SWSS_LOG_NOTICE("Set port %s FEC mode %s", port.m_alias.c_str(), mode.c_str());
 
     setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &mode);
 
@@ -3380,14 +3400,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                                 p.m_fec_mode = fec_mode_map[fec_mode];
                                 p.m_fec_cfg = true;
 
-                                if (setPortFec(p, p.m_fec_mode))
+                                if (setPortFec(p, fec_mode))
                                 {
                                     m_portList[alias] = p;
-                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                 }
                                 else
                                 {
-                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                     it++;
                                     continue;
                                 }
@@ -3397,14 +3415,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                                 /* Port is already down, setting fec mode*/
                                 p.m_fec_mode = fec_mode_map[fec_mode];
                                 p.m_fec_cfg = true;
-                                if (setPortFec(p, p.m_fec_mode))
+                                if (setPortFec(p, fec_mode))
                                 {
                                     m_portList[alias] = p;
-                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                 }
                                 else
                                 {
-                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                     it++;
                                     continue;
                                 }
