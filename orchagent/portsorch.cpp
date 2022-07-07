@@ -1174,21 +1174,10 @@ bool PortsOrch::setPortFec(Port &port, string &mode)
     if (searchRef != m_portSupportedFecModes.end())
     {
         auto &supportedFecModes = searchRef->second;
-        if (!supportedFecModes.unknown)
+        if (!supportedFecModes.empty() && (supportedFecModes.find(mode) == supportedFecModes.end()))
         {
-            bool found = false;
-            for (auto supportedFecMode : supportedFecModes.fecModes)
-            {
-                if (port.m_fec_mode == supportedFecMode)
-                {
-                    found = true;
-                }
-            }
-            if (!found)
-            {
-                SWSS_LOG_ERROR("Unsupported mode %s on port %s", mode.c_str(), port.m_alias.c_str());
-                return true;
-            }
+            SWSS_LOG_ERROR("Unsupported mode %s on port %s", mode.c_str(), port.m_alias.c_str());
+            return true;
         }
     }
 
@@ -1988,17 +1977,27 @@ void PortsOrch::getPortSupportedFecModes(const std::string& alias, sai_object_id
 {
     sai_attribute_t attr;
     sai_status_t status;
-    auto &fecModes = supported_fecmodes.fecModes;
+    vector<sai_int32_t> fecModes(fec_mode_reverse_map.size());
 
     attr.id = SAI_PORT_ATTR_SUPPORTED_FEC_MODE;
     attr.value.s32list.count = static_cast<uint32_t>(fecModes.size());
     attr.value.s32list.list = fecModes.data();
 
     status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+    fecModes.resize(attr.value.s32list.count);
     if (status == SAI_STATUS_SUCCESS)
     {
-        fecModes.resize(attr.value.u32list.count);
-        supported_fecmodes.unknown = false;
+        if (fecModes.empty())
+        {
+            supported_fecmodes.insert("N/A");
+        }
+        else
+        {
+            for(auto fecMode : fecModes)
+            {
+                supported_fecmodes.insert(fec_mode_reverse_map[static_cast<sai_port_fec_mode_t>(fecMode)]);
+            }
+        }
     }
     else
     {
@@ -2016,8 +2015,7 @@ void PortsOrch::getPortSupportedFecModes(const std::string& alias, sai_object_id
                            alias.c_str(), port_id, status);
         }
 
-        fecModes.clear(); // return empty
-        supported_fecmodes.unknown = true;
+        supported_fecmodes.clear(); // return empty
     }
 }
 
@@ -2029,11 +2027,10 @@ void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_i
         return;
     }
     PortSupportedFecModes supported_fec_modes;
-    supported_fec_modes.fecModes.resize(fec_mode_reverse_map.size());
     getPortSupportedFecModes(alias, port_id, supported_fec_modes);
     m_portSupportedFecModes[port_id] = supported_fec_modes;
 
-    if (supported_fec_modes.unknown)
+    if (supported_fec_modes.empty())
     {
         // Do not expose "supported_fecs" in case fetching FEC modes is not supported by the vendor
         SWSS_LOG_INFO("No supported_fecs exposed to STATE_DB for port %s since fetching supported FEC modes is not supported by the vendor",
@@ -2043,22 +2040,16 @@ void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_i
 
     vector<FieldValueTuple> v;
     std::string supported_fec_modes_str;
-    if (!supported_fec_modes.fecModes.empty())
+    bool first = true;
+    for(auto fec : supported_fec_modes)
     {
-        bool first = true;
-        for(auto fec : supported_fec_modes.fecModes)
-        {
-            if (first)
-                first = false;
-            else
-                supported_fec_modes_str += ',';
-            supported_fec_modes_str += fec_mode_reverse_map[static_cast<sai_port_fec_mode_t>(fec)];
-        }
+        if (first)
+            first = false;
+        else
+            supported_fec_modes_str += ',';
+        supported_fec_modes_str += fec;
     }
-    else
-    {
-        supported_fec_modes_str = "N/A";
-    }
+
     v.emplace_back(std::make_pair("supported_fecs", supported_fec_modes_str));
     m_portStateTable.set(alias, v);
 }
