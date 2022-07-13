@@ -489,47 +489,137 @@ bool WredMapHandler::convertBool(string str, bool &val)
     return true;
 }
 
+WredMapHandler::qos_wred_thresholds_store_t WredMapHandler::m_wredProfiles;
+
 bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attribs)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
+    vector<sai_attribute_t> second_half_attributes;
+    auto &key = kfvKey(tuple);
+    auto &storedProfile = WredMapHandler::m_wredProfiles[key];
+    qos_wred_thresholds_t currentProfile = storedProfile;
+    sai_uint32_t threshold;
+
+    /*
+     * Setting WRED profile can fail in case for any color
+     * - the current min threshold is greater than the new max threshold 
+     * - or the current max threshold is less than the new min threshold
+     * on some vendor's platforms.
+     *
+     * The root cause
+     * There can be only one attribute in each SAI SET operation, which means
+     * the vendor SAI do not have a big picture regarding what attributes are being set
+     * and can only perform the sanity check against each SET operation.
+     * In the above case, the sanity check will fail.
+     *
+     * The fix
+     * Check each attribute to be set, in case it violates the condition, which is
+     * for any color and in any time, the min threshold should be less than the max threshold,
+     * the violating attribute will be deferred. This is done via putting it into the 2nd half attributes list
+     * By doing so, the other threshold will be applied first,
+     * which extends the threshold range and breaks the violating condition.
+     * An logic is also introduced to guarantee the min threshold is always greater than the max threshold in the new data.
+     *
+     * For example:
+     * Current min=1M, max=2M, new min=3M, new max=4M
+     * The min is set first, so current max (2M) < new min (3M), which violates the condition
+     * By the new logic, min threshold will be deferred so the new max will be applied first
+     * min = 1M, max = 2M => min = 1M, max = 4M
+     * and then the new min is applied and no violating.
+     */
+
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
         if (fvField(*i) == yellow_max_threshold_field_name)
         {
             attr.id = SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            attr.value.u32 = threshold;
+            if (currentProfile.yellow_min_threshold > threshold)
+            {
+                second_half_attributes.push_back(attr);
+            }
+            else
+            {
+                attribs.push_back(attr);
+            }
+            currentProfile.yellow_max_threshold = threshold;
         }
         else if (fvField(*i) == yellow_min_threshold_field_name)
         {
             attr.id = SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            attr.value.u32 = threshold;
+            if (currentProfile.yellow_max_threshold < threshold)
+            {
+                second_half_attributes.push_back(attr);
+            }
+            else
+            {
+                attribs.push_back(attr);
+            }
+            currentProfile.yellow_min_threshold = threshold;
         }
         else if (fvField(*i) == green_max_threshold_field_name)
         {
             attr.id = SAI_WRED_ATTR_GREEN_MAX_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            attr.value.u32 = threshold;
+            if (currentProfile.green_min_threshold > threshold)
+            {
+                second_half_attributes.push_back(attr);
+            }
+            else
+            {
+                attribs.push_back(attr);
+            }
+            currentProfile.green_max_threshold = threshold;
         }
         else if (fvField(*i) == green_min_threshold_field_name)
         {
-           attr.id = SAI_WRED_ATTR_GREEN_MIN_THRESHOLD;
-           attr.value.s32 = stoi(fvValue(*i));
-           attribs.push_back(attr);
+            attr.id = SAI_WRED_ATTR_GREEN_MIN_THRESHOLD;
+            threshold = stoi(fvValue(*i));
+            attr.value.u32 = threshold;
+            if (currentProfile.green_max_threshold < threshold)
+            {
+                second_half_attributes.push_back(attr);
+            }
+            else
+            {
+                attribs.push_back(attr);
+            }
+            currentProfile.green_min_threshold = threshold;
         }
         else if (fvField(*i) == red_max_threshold_field_name)
         {
             attr.id = SAI_WRED_ATTR_RED_MAX_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            attr.value.u32 = threshold;
+            if (currentProfile.red_min_threshold > threshold)
+            {
+                second_half_attributes.push_back(attr);
+            }
+            else
+            {
+                attribs.push_back(attr);
+            }
+            currentProfile.red_max_threshold = threshold;
         }
         else if (fvField(*i) == red_min_threshold_field_name)
         {
             attr.id = SAI_WRED_ATTR_RED_MIN_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            attr.value.u32 = threshold;
+            if (currentProfile.red_max_threshold < threshold)
+            {
+                second_half_attributes.push_back(attr);
+            }
+            else
+            {
+                attribs.push_back(attr);
+            }
+            currentProfile.red_min_threshold = threshold;
         }
         else if (fvField(*i) == green_drop_probability_field_name)
         {
@@ -588,6 +678,18 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             return false;
         }
     }
+
+    if ((currentProfile.green_min_threshold > currentProfile.green_max_threshold)
+        || (currentProfile.yellow_min_threshold > currentProfile.yellow_max_threshold)
+        || (currentProfile.red_min_threshold > currentProfile.red_max_threshold))
+    {
+        SWSS_LOG_ERROR("Wrong wred profile: min threshold is greater than max threshold");
+        return false;
+    }
+
+    attribs.insert(attribs.end(), second_half_attributes.begin(), second_half_attributes.end());
+    storedProfile = currentProfile;
+
     return true;
 }
 
