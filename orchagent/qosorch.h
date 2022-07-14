@@ -113,6 +113,12 @@ protected:
     bool convertEcnMode(string str, sai_ecn_mark_mode_t &ecn_val);
     bool convertBool(string str, bool &val);
 private:
+    void appendThresholdToAttributeList(sai_attr_id_t type,
+                                        sai_uint32_t threshold,
+                                        bool needDefer,
+                                        vector<sai_attribute_t> &normalQueue,
+                                        vector<sai_attribute_t> &deferredQueue,
+                                        sai_uint32_t &newThreshold);
     typedef struct {
         sai_uint32_t green_max_threshold;
         sai_uint32_t green_min_threshold;

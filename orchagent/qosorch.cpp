@@ -489,13 +489,35 @@ bool WredMapHandler::convertBool(string str, bool &val)
     return true;
 }
 
+void WredMapHandler::appendThresholdToAttributeList(sai_attr_id_t type,
+                                                    sai_uint32_t threshold,
+                                                    bool needDefer,
+                                                    vector<sai_attribute_t> &normalQueue,
+                                                    vector<sai_attribute_t> &deferredQueue,
+                                                    sai_uint32_t &newThreshold)
+{
+    sai_attribute_t attr;
+
+    attr.id = type;
+    attr.value.u32 = threshold;
+    if (needDefer)
+    {
+        deferredQueue.push_back(attr);
+    }
+    else
+    {
+        normalQueue.push_back(attr);
+    }
+    newThreshold = threshold;
+}
+
 WredMapHandler::qos_wred_thresholds_store_t WredMapHandler::m_wredProfiles;
 
 bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attribs)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
-    vector<sai_attribute_t> second_half_attributes;
+    vector<sai_attribute_t> deferred_attributes;
     auto &key = kfvKey(tuple);
     auto &storedProfile = WredMapHandler::m_wredProfiles[key];
     qos_wred_thresholds_t currentProfile = storedProfile;
@@ -544,93 +566,63 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
     {
         if (fvField(*i) == yellow_max_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD;
             threshold = stoi(fvValue(*i));
-            attr.value.u32 = threshold;
-            if (currentProfile.yellow_min_threshold > threshold)
-            {
-                second_half_attributes.push_back(attr);
-            }
-            else
-            {
-                attribs.push_back(attr);
-            }
-            currentProfile.yellow_max_threshold = threshold;
+            appendThresholdToAttributeList(SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.yellow_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.yellow_max_threshold);
         }
         else if (fvField(*i) == yellow_min_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD;
             threshold = stoi(fvValue(*i));
-            attr.value.u32 = threshold;
-            if (currentProfile.yellow_max_threshold < threshold)
-            {
-                second_half_attributes.push_back(attr);
-            }
-            else
-            {
-                attribs.push_back(attr);
-            }
-            currentProfile.yellow_min_threshold = threshold;
+            appendThresholdToAttributeList(SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.yellow_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.yellow_min_threshold);
         }
         else if (fvField(*i) == green_max_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_GREEN_MAX_THRESHOLD;
             threshold = stoi(fvValue(*i));
-            attr.value.u32 = threshold;
-            if (currentProfile.green_min_threshold > threshold)
-            {
-                second_half_attributes.push_back(attr);
-            }
-            else
-            {
-                attribs.push_back(attr);
-            }
-            currentProfile.green_max_threshold = threshold;
+            appendThresholdToAttributeList(SAI_WRED_ATTR_GREEN_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.green_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.green_max_threshold);
         }
         else if (fvField(*i) == green_min_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_GREEN_MIN_THRESHOLD;
             threshold = stoi(fvValue(*i));
-            attr.value.u32 = threshold;
-            if (currentProfile.green_max_threshold < threshold)
-            {
-                second_half_attributes.push_back(attr);
-            }
-            else
-            {
-                attribs.push_back(attr);
-            }
-            currentProfile.green_min_threshold = threshold;
+            appendThresholdToAttributeList(SAI_WRED_ATTR_GREEN_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.green_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.green_min_threshold);
         }
         else if (fvField(*i) == red_max_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_RED_MAX_THRESHOLD;
             threshold = stoi(fvValue(*i));
-            attr.value.u32 = threshold;
-            if (currentProfile.red_min_threshold > threshold)
-            {
-                second_half_attributes.push_back(attr);
-            }
-            else
-            {
-                attribs.push_back(attr);
-            }
-            currentProfile.red_max_threshold = threshold;
+            appendThresholdToAttributeList(SAI_WRED_ATTR_RED_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.red_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.red_max_threshold);
         }
         else if (fvField(*i) == red_min_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_RED_MIN_THRESHOLD;
             threshold = stoi(fvValue(*i));
-            attr.value.u32 = threshold;
-            if (currentProfile.red_max_threshold < threshold)
-            {
-                second_half_attributes.push_back(attr);
-            }
-            else
-            {
-                attribs.push_back(attr);
-            }
-            currentProfile.red_min_threshold = threshold;
+            appendThresholdToAttributeList(SAI_WRED_ATTR_RED_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.red_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.red_min_threshold);
         }
         else if (fvField(*i) == green_drop_probability_field_name)
         {
@@ -698,7 +690,7 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
         return false;
     }
 
-    attribs.insert(attribs.end(), second_half_attributes.begin(), second_half_attributes.end());
+    attribs.insert(attribs.end(), deferred_attributes.begin(), deferred_attributes.end());
     storedProfile = currentProfile;
 
     return true;
