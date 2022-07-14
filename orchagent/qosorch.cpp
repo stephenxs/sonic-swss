@@ -502,10 +502,10 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
     sai_uint32_t threshold;
 
     /*
-     * Setting WRED profile can fail in case for any color
+     * Setting WRED profile can fail in case
      * - the current min threshold is greater than the new max threshold 
      * - or the current max threshold is less than the new min threshold
-     * on some vendor's platforms.
+     * for any color at any time, on some vendor's platforms.
      *
      * The root cause
      * There can be only one attribute in each SAI SET operation, which means
@@ -514,19 +514,30 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
      * In the above case, the sanity check will fail.
      *
      * The fix
-     * Check each attribute to be set, in case it violates the condition, which is
-     * for any color and in any time, the min threshold should be less than the max threshold,
-     * the violating attribute will be deferred. This is done via putting it into the 2nd half attributes list
-     * By doing so, the other threshold will be applied first,
-     * which extends the threshold range and breaks the violating condition.
-     * An logic is also introduced to guarantee the min threshold is always greater than the max threshold in the new data.
+     * The thresholds that have been applied to SAI will be stored in orchagent.
+     *
+     * The original logic is to handle each attribute to be set and append it to an attribute list.
+     * To resolve the issue, a 2nd half attribute list is introduced and
+     * will be appended to the original attribute list after all the attributes have been handled.
+     *
+     * In the new logic, each threshold to be set will be checked against the stored data.
+     * In case it violates the condition, the violating attribute will be deferred, done via putting it into the 2nd half attributes list.
+     *
+     * For any color, there can be only 1 threshold violating the condition.
+     * Otherwise, it means both new min > old max and new max > old min, which means either old max < old min or new max < new min,
+     * which means either old or new data is illegal.
+     * This can not happen because illegal data can not be applied and stored.
+     *
+     * By doing so, the other threshold will be applied first, which extends the threshold range and breaks the violating condition.
+     * A logic is also introduced to guarantee the min threshold is always less than the max threshold in the new profile to be set.
      *
      * For example:
      * Current min=1M, max=2M, new min=3M, new max=4M
      * The min is set first, so current max (2M) < new min (3M), which violates the condition
-     * By the new logic, min threshold will be deferred so the new max will be applied first
-     * min = 1M, max = 2M => min = 1M, max = 4M
-     * and then the new min is applied and no violating.
+     * By the new logic, min threshold will be deferred so the new max will be applied first and then the new min is applied and no violating.
+     *  min = 1M, max = 2M
+     *  => min = 1M, max = 4M
+     *  => min = 3M, max = 4M
      */
 
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
