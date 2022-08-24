@@ -739,13 +739,22 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
         switch (attrib.id)
         {
         case SAI_WRED_ATTR_GREEN_ENABLE:
-            wred_enable_set |= GREEN_WRED_ENABLED;
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= GREEN_WRED_ENABLED;
+            }
             break;
         case SAI_WRED_ATTR_YELLOW_ENABLE:
-            wred_enable_set |= YELLOW_WRED_ENABLED;
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= YELLOW_WRED_ENABLED;
+            }
             break;
         case SAI_WRED_ATTR_RED_ENABLE:
-            wred_enable_set |= RED_WRED_ENABLED;
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= RED_WRED_ENABLED;
+            }
             break;
         case SAI_WRED_ATTR_GREEN_DROP_PROBABILITY:
             drop_prob_set |= GREEN_DROP_PROBABILITY_SET;

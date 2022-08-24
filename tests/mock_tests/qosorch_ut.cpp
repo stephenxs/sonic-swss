@@ -1381,6 +1381,7 @@ namespace qosorch_test
         // QoS orchagent should guarantee that the new min is configured first and then new max
         vector<FieldValueTuple> greenProfile = {
             {"wred_green_enable", "true"},
+            {"wred_yellow_enable", "false"},
         };
         qos_wred_max_drop_probability_t greenProbabilities = {
             100, // green_max_drop_probability
@@ -1395,6 +1396,7 @@ namespace qosorch_test
 
         vector<FieldValueTuple> yellowProfile = {
             {"wred_yellow_enable", "true"},
+            {"wred_red_enable", "false"},
         };
         qos_wred_max_drop_probability_t yellowProbabilities = {
             0,   // green_max_drop_probability
@@ -1408,6 +1410,7 @@ namespace qosorch_test
         updateMaxDropProbabilityAndCheck("yellow", yellowProfile, yellowProbabilities);
 
         vector<FieldValueTuple> redProfile = {
+            {"wred_green_enable", "false"},
             {"wred_red_enable", "true"},
         };
         qos_wred_max_drop_probability_t redProbabilities = {
