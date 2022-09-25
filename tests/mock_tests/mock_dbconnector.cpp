@@ -6,9 +6,12 @@
 #include <sys/types.h>
 
 #include "dbconnector.h"
+#include "mock_table.h"
 
 namespace swss
 {
+    using namespace testing_db;
+
     DBConnector::DBConnector(int dbId, const std::string &hostname, int port, unsigned int timeout) :
         m_dbId(dbId)
     {
@@ -58,5 +61,10 @@ namespace swss
     int DBConnector::getDbId() const
     {
         return m_dbId;
+    }
+
+    std::shared_ptr<std::string> DBConnector::get(const std::string &key)
+    {
+        return __DBConnector_get(*this, key);
     }
 }
