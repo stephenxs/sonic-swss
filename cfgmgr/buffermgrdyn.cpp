@@ -13,6 +13,7 @@
 #include "shellcmd.h"
 #include "schema.h"
 #include "warm_restart.h"
+#include "restart_waiter.h"
 
 /*
  * Some Tips
@@ -50,6 +51,8 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_bufferPoolReady(false),
         m_bufferObjectsPending(true),
         m_bufferCompletelyInitialized(false),
+        m_isFastReboot(false),
+        m_isWarmReboot(false),
         m_mmuSizeNumber(0)
 {
     SWSS_LOG_ENTER();
@@ -156,7 +159,16 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     // This is to accelerate the fast reboot converging time.
     if (WarmStart::isWarmStart())
     {
-        m_waitApplyAdditionalZeroProfiles = 0;
+        if (RestartWaiter::isFastRestartInProgress(*stateDb))
+        {
+            m_isFastReboot = true;
+            m_waitApplyAdditionalZeroProfiles = 3;
+        }
+        else
+        {
+            m_isWarmReboot = true;
+            m_waitApplyAdditionalZeroProfiles = 0;
+        }
         WarmStart::setWarmStartState("buffermgrd", WarmStart::INITIALIZED);
     }
     else
@@ -3512,7 +3524,7 @@ void BufferMgrDynamic::handlePendingBufferObjects()
         // - on admin down ports, zero profiles are applied
         bool configuredItemsDone = !m_bufferObjectsPending && m_pendingApplyZeroProfilePorts.empty();
 
-        if (WarmStart::isWarmStart())
+        if (m_isWarmReboot)
         {
             // For warm restart, all buffer items have been applied now
             if (configuredItemsDone)
@@ -3536,6 +3548,10 @@ void BufferMgrDynamic::handlePendingBufferObjects()
             {
                 if (m_portInitDone && configuredItemsDone)
                 {
+                    if (m_isFastReboot && m_waitApplyAdditionalZeroProfiles == 3)
+                    {
+                        WarmStart::setWarmStartState("buffermgrd", WarmStart::RECONCILED);
+                    }
                     SWSS_LOG_NOTICE("Additional zero profiles will be appied after %d seconds", m_waitApplyAdditionalZeroProfiles * 10);
                     m_waitApplyAdditionalZeroProfiles --;
                 }

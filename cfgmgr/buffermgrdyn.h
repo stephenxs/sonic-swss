@@ -175,6 +175,8 @@ private:
     bool m_bufferPoolReady;
     bool m_bufferObjectsPending;
     bool m_bufferCompletelyInitialized;
+    bool m_isFastReboot;
+    bool m_isWarmReboot;
 
     std::string m_configuredSharedHeadroomPoolSize;
 
