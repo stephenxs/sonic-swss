@@ -1,5 +1,7 @@
 #include "table.h"
 #include "producerstatetable.h"
+#include "dbconnector.h"
+#include "tokenize.h"
 #include <set>
 
 using TableDataT = std::map<std::string, std::vector<swss::FieldValueTuple>>;
@@ -15,6 +17,28 @@ namespace testing_db
     void reset()
     {
         gDB.clear();
+    }
+
+    std::shared_ptr<std::string> __DBConnector_get(swss::DBConnector &db, const std::string &tableKey)
+    {
+        const auto &dbName = db.getDbName();
+        auto spliter = ((dbName == "CONFIG_DB") || (dbName == "STATE_DB")) ? '|' : ':';
+        auto tokens = swss::tokenize(tableKey, spliter);
+        auto &tableName = tokens[0];
+        auto &key = tokens[1];
+        auto &table = gDB[db.getDbId()][tableName];
+        std::vector<swss::FieldValueTuple> &ovalues = table[key];
+        if (ovalues.empty())
+        {
+            return std::shared_ptr<std::string>(NULL);
+        }
+        else if (ovalues.size() == 1 && fvField(ovalues[0]).empty())
+        {
+            std::shared_ptr<std::string> ptr(new std::string(fvValue(ovalues[0])));
+            return ptr;
+        }
+
+        throw std::runtime_error("GET failed, memory exception");
     }
 }
 
@@ -62,6 +86,25 @@ namespace swss
     {
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         table[key] = values;
+    }
+
+    void Table::hset(const std::string &key,
+                     const std::string &field,
+                     const std::string &value,
+                     const std::string &op,
+                     const std::string &prefix)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        std::vector<FieldValueTuple> &values = table[key];
+        for (auto &i : values)
+        {
+            if (fvField(i) == field)
+            {
+                fvValue(i) = value;
+                return;
+            }
+        }
+        values.emplace_back(field, value);
     }
 
     void Table::getKeys(std::vector<std::string> &keys)
