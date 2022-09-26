@@ -52,6 +52,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_bufferPoolReady(false),
         m_bufferObjectsPending(true),
         m_bufferCompletelyInitialized(false),
+        m_isFastReboot(false),
         m_mmuSizeNumber(0)
 {
     SWSS_LOG_ENTER();
@@ -160,6 +161,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     {
         if (RestartWaiter::isFastRestartInProgress(*m_stateDb))
         {
+            m_isFastReboot = true;
             m_waitApplyAdditionalZeroProfiles = 3;
             WarmStart::setWarmStartState("buffermgrd", WarmStart::INITIALIZED);
         }
@@ -3522,7 +3524,7 @@ void BufferMgrDynamic::handlePendingBufferObjects()
         // - on admin down ports, zero profiles are applied
         bool configuredItemsDone = !m_bufferObjectsPending && m_pendingApplyZeroProfilePorts.empty();
 
-        if (WarmStart::isWarmStart() && (!RestartWaiter::isFastRestartInProgress(*m_stateDb)))
+        if (WarmStart::isWarmStart() && (!m_isFastReboot))
         {
             // For warm restart, all buffer items have been applied now
             if (configuredItemsDone)
@@ -3546,6 +3548,10 @@ void BufferMgrDynamic::handlePendingBufferObjects()
             {
                 if (m_portInitDone && configuredItemsDone)
                 {
+                    if (m_isFastReboot && m_waitApplyAdditionalZeroProfiles == 3)
+                    {
+                        WarmStart::setWarmStartState("buffermgrd", WarmStart::RECONCILED);
+                    }
                     SWSS_LOG_NOTICE("Additional zero profiles will be appied after %d seconds", m_waitApplyAdditionalZeroProfiles * 10);
                     m_waitApplyAdditionalZeroProfiles --;
                 }
@@ -3571,10 +3577,6 @@ void BufferMgrDynamic::handlePendingBufferObjects()
                 if (configuredItemsDone)
                 {
                     m_bufferCompletelyInitialized = true;
-                    if (RestartWaiter::isFastRestartInProgress(*m_stateDb))
-                    {
-                        WarmStart::setWarmStartState("buffermgrd", WarmStart::RECONCILED);
-                    }
                     SWSS_LOG_NOTICE("All bufer configuration has been applied. Buffer initialization done");
                 }
             }
