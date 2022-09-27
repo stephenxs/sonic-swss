@@ -34,7 +34,6 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_bufferObjectNames{"priority group", "queue"},
         m_bufferDirectionNames{"ingress", "egress"},
         m_applDb(applDb),
-        m_stateDb(stateDb),
         m_zeroProfilesLoaded(false),
         m_supportRemoving(true),
         m_cfgDefaultLosslessBufferParam(cfgDb, CFG_DEFAULT_LOSSLESS_BUFFER_PARAMETER),
@@ -160,7 +159,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     // This is to accelerate the fast reboot converging time.
     if (WarmStart::isWarmStart())
     {
-        if (RestartWaiter::isFastRestartInProgress(*m_stateDb))
+        if (RestartWaiter::isFastRestartInProgress(*stateDb))
         {
             m_isFastReboot = true;
             m_waitApplyAdditionalZeroProfiles = 3;
