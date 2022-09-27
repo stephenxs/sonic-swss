@@ -53,6 +53,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_bufferObjectsPending(true),
         m_bufferCompletelyInitialized(false),
         m_isFastReboot(false),
+        m_isWarmReboot(false),
         m_mmuSizeNumber(0)
 {
     SWSS_LOG_ENTER();
@@ -167,6 +168,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         }
         else
         {
+            m_isWarmReboot = true;
             m_waitApplyAdditionalZeroProfiles = 0;
             WarmStart::setWarmStartState("buffermgrd", WarmStart::INITIALIZED);
         }
@@ -3524,7 +3526,7 @@ void BufferMgrDynamic::handlePendingBufferObjects()
         // - on admin down ports, zero profiles are applied
         bool configuredItemsDone = !m_bufferObjectsPending && m_pendingApplyZeroProfilePorts.empty();
 
-        if (WarmStart::isWarmStart() && (!m_isFastReboot))
+        if (m_isWarmReboot)
         {
             // For warm restart, all buffer items have been applied now
             if (configuredItemsDone)
