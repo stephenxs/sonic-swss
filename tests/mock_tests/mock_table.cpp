@@ -88,6 +88,25 @@ namespace swss
         table[key] = values;
     }
 
+    void Table::hset(const std::string &key,
+                     const std::string &field,
+                     const std::string &value,
+                     const std::string &op,
+                     const std::string &prefix)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        std::vector<FieldValueTuple> &values = table[key];
+        for (auto &i : values)
+        {
+            if (fvField(i) == field)
+            {
+                fvValue(i) = value;
+                return;
+            }
+        }
+        values.emplace_back(field, value);
+    }
+
     void Table::getKeys(std::vector<std::string> &keys)
     {
         keys.clear();
