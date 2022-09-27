@@ -44,6 +44,8 @@ namespace buffermgrdyn_test
     Table bufferMaxParamTable(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE);
     Table statePortTable(m_state_db.get(), STATE_PORT_TABLE_NAME);
     Table stateBufferTable(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE);
+    Table stateFastRebootTable(m_state_db.get(), "FAST_REBOOT");
+    Table stateWarmRestartEnableTable(m_state_db.get(), STATE_WARM_RESTART_ENABLE_TABLE_NAME);
 
     map<string, vector<FieldValueTuple>> zeroProfileMap;
     vector<KeyOpFieldsValuesTuple> zeroProfile;
@@ -499,6 +501,12 @@ namespace buffermgrdyn_test
 
         StartBufferManager();
 
+        WarmStart::WarmStartState state;
+        WarmStart::getWarmStartState("buffermgrd", state);
+        ASSERT_EQ(state, WarmStart::RECONCILED);
+        ASSERT_FALSE(m_dynamicBuffer->m_isWarmReboot);
+        ASSERT_FALSE(m_dynamicBuffer->m_isFastReboot);
+
         InitPort();
         ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup["Ethernet0"].state, PORT_INITIALIZING);
 
@@ -841,6 +849,17 @@ namespace buffermgrdyn_test
         vector<string> skippedPools = {"", "ingress_lossless_pool", ""};
         int round = 0;
 
+        // Mock fast restart
+        stateFastRebootTable.set("system",
+                                 {
+                                     {"", "true"}
+                                 });
+        stateWarmRestartEnableTable.set("system",
+                                        {
+                                            {"enable", "true"}
+                                        });
+        WarmStart::checkWarmStart("buffermgrd", "swss", false);
+
         SetUpReclaimingBuffer();
         shared_ptr<vector<KeyOpFieldsValuesTuple>> zero_profile = make_shared<vector<KeyOpFieldsValuesTuple>>(zeroProfile);
 
@@ -848,6 +867,11 @@ namespace buffermgrdyn_test
         InitMmuSize();
 
         StartBufferManager(zero_profile);
+
+        WarmStart::WarmStartState state;
+        WarmStart::getWarmStartState("buffermgrd", state);
+        ASSERT_EQ(state, WarmStart::INITIALIZED);
+        ASSERT_TRUE(m_dynamicBuffer->m_isFastReboot);
 
         statePortTable.set("Ethernet0",
                            {
@@ -1015,8 +1039,14 @@ namespace buffermgrdyn_test
             ASSERT_TRUE(appBufferEgrProfileListTable.get("Ethernet0", fieldValues));
             CheckIfVectorsMatch(fieldValues, {{"profile_list", "egress_lossless_zero_profile,egress_lossy_zero_profile"}});
 
-            // Configured but not applied items. There is an extra delay
-            m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles = 0;
+            if (round == 0)
+            {
+                WarmStart::getWarmStartState("buffermgrd", state);
+                ASSERT_EQ(state, WarmStart::RECONCILED);
+                ASSERT_TRUE(m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles > 0);
+                m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles = 0;
+            }
+
             m_dynamicBuffer->doTask(m_selectableTable);
             for (auto &adminDownPort : adminDownPorts)
             {
@@ -1093,7 +1123,6 @@ namespace buffermgrdyn_test
         }
     }
 
-
     /*
      * Clear qos with reclaiming buffer sad flows
      * Reclaiming buffer should be triggered via any single buffer item
@@ -1103,6 +1132,7 @@ namespace buffermgrdyn_test
         vector<FieldValueTuple> fieldValues;
         vector<string> keys;
         vector<tuple<Table&, string, string, Table&, string, string>> bufferItems;
+        bool firstRound = true;
 
         bufferItems.emplace_back(bufferPgTable, "Ethernet0:0", "ingress_lossy_profile", appBufferPgTable, "profile", "ingress_lossy_pg_zero_profile");
         bufferItems.emplace_back(bufferPgTable, "Ethernet0:3-4", "NULL", appBufferPgTable, "", "");
@@ -1117,7 +1147,19 @@ namespace buffermgrdyn_test
         InitDefaultLosslessParameter();
         InitMmuSize();
 
+        // Mock warm restart
+        stateWarmRestartEnableTable.set("system",
+                                        {
+                                            {"enable", "true"}
+                                        });
+        WarmStart::checkWarmStart("buffermgrd", "swss", false);
+
         StartBufferManager(zero_profile);
+
+        WarmStart::WarmStartState state;
+        WarmStart::getWarmStartState("buffermgrd", state);
+        ASSERT_EQ(state, WarmStart::INITIALIZED);
+        ASSERT_TRUE(m_dynamicBuffer->m_isWarmReboot);
 
         stateBufferTable.set("Ethernet0",
                              {
@@ -1162,11 +1204,27 @@ namespace buffermgrdyn_test
             InitBufferPool();
             InitDefaultBufferProfile();
 
-            m_dynamicBuffer->doTask(m_selectableTable);
-
             // Another doTask to ensure all the dependent tables have been drained
             // after buffer pools and profiles have been drained
             static_cast<Orch *>(m_dynamicBuffer)->doTask();
+
+            if (firstRound)
+            {
+                firstRound = false;
+                WarmStart::getWarmStartState("buffermgrd", state);
+                ASSERT_EQ(state, WarmStart::INITIALIZED);
+                m_dynamicBuffer->doTask(m_selectableTable);
+                WarmStart::getWarmStartState("buffermgrd", state);
+                ASSERT_EQ(state, WarmStart::RECONCILED);
+
+                ASSERT_TRUE(appBufferQueueTable.get("Ethernet0:0-15", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+                fieldValues.clear();
+            }
+            else
+            {
+                m_dynamicBuffer->doTask(m_selectableTable);
+            }
 
             if (expectedProfile.empty())
             {
@@ -1178,7 +1236,6 @@ namespace buffermgrdyn_test
                 CheckIfVectorsMatch(fieldValues, {{fieldName, expectedProfile}});
             }
 
-            m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles = 0;
             m_dynamicBuffer->doTask(m_selectableTable);
 
             ASSERT_TRUE(m_dynamicBuffer->m_pendingApplyZeroProfilePorts.empty());
