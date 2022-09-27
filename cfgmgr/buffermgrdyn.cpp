@@ -163,14 +163,13 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         {
             m_isFastReboot = true;
             m_waitApplyAdditionalZeroProfiles = 3;
-            WarmStart::setWarmStartState("buffermgrd", WarmStart::INITIALIZED);
         }
         else
         {
             m_isWarmReboot = true;
             m_waitApplyAdditionalZeroProfiles = 0;
-            WarmStart::setWarmStartState("buffermgrd", WarmStart::INITIALIZED);
         }
+        WarmStart::setWarmStartState("buffermgrd", WarmStart::INITIALIZED);
     }
     else
     {
