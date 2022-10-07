@@ -725,13 +725,16 @@ void PortsOrch::removeDefaultBridgePorts()
         }
     }
 
-    /* Flush FDB */
-    status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
-    if (status != SAI_STATUS_SUCCESS)
+    if (sai_fdb_api && sai_fdb_api->flush_fdb_entries)
     {
-        SWSS_LOG_WARN("Failed to flush FDB table");
+        /* Flush FDB */
+        status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Failed to flush FDB table");
+        }
+        sleep(5);
     }
-    sleep(5);
 
     /* Now, we are safe to remove bridge ports*/
     for (auto port : bridge_ports_to_remove)
