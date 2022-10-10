@@ -239,7 +239,7 @@ struct SaiBulkerTraits<sai_buffer_api_t>
     using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
     using bulk_get_entry_attribute_fn = sai_bulk_object_get_attribute_fn;
 };
-
+/*
 template<>
 struct SaiBulkerTraits<sai_hostif_api_t>
 {
@@ -252,7 +252,7 @@ struct SaiBulkerTraits<sai_hostif_api_t>
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
     using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
     using bulk_get_entry_attribute_fn = sai_bulk_object_get_attribute_fn;
-};
+    };*/
 
 template <typename T>
 class EntityBulker
@@ -840,7 +840,7 @@ public:
             {
                 sai_object_id_t *pid = std::get<0>(i);
                 auto const& attrs = std::get<1>(i);
-                    SWSS_LOG_NOTICE("BULK HANDLING CREATING ENTRIES %" PRIx64 " %p", *pid, pid);
+//                    SWSS_LOG_NOTICE("BULK HANDLING CREATING ENTRIES %" PRIx64 " %p", *pid, pid);
                 if (*pid == SAI_NULL_OBJECT_ID)
                 {
                     rs.push_back(pid);
@@ -1163,7 +1163,7 @@ inline ObjectBulker<sai_buffer_api_t>::ObjectBulker(SaiBulkerTraits<sai_buffer_a
     get_entries_attribute = api->get_ingress_priority_groups_attribute;
     // TODO: wait until available in SAI
 }
-
+/*
 template <>
 inline ObjectBulker<sai_hostif_api_t>::ObjectBulker(SaiBulkerTraits<sai_hostif_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
     switch_id(switch_id),
@@ -1174,4 +1174,4 @@ inline ObjectBulker<sai_hostif_api_t>::ObjectBulker(SaiBulkerTraits<sai_hostif_a
     set_entries_attribute = api->set_hostifs_attribute;
     get_entries_attribute = api->get_hostifs_attribute;
     // TODO: wait until available in SAI
-}
+    }*/

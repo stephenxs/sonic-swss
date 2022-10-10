@@ -366,8 +366,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 })),
         m_portBulker(sai_port_api, gSwitchId, gMaxBulkSize),
-        m_schedulerGroupBulker(sai_scheduler_group_api, gSwitchId, gMaxBulkSize),
-        m_hostifBulker(sai_hostif_api, gSwitchId, gMaxBulkSize)
+        m_schedulerGroupBulker(sai_scheduler_group_api, gSwitchId, gMaxBulkSize)
+        //m_hostifBulker(sai_hostif_api, gSwitchId, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
 
@@ -3257,12 +3257,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     it++;
                 }
 
-                for (auto &alias : m_portsPendingBulkGet)
+/*                for (auto &alias : m_portsPendingBulkGet)
                 {
                     auto &port = m_portList[alias];
                     addHostIntfs(port, alias, port.m_hif_id);
                 }
-                m_hostifBulker.flush();
+                m_hostifBulker.flush();*/
 
                 // Bulk get admin status and speed for ports
                 for (auto &alias : m_portsPendingBulkGet)
@@ -3299,7 +3299,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
 
                 // Set status for host ifs
-                for (auto &alias : m_portsPendingBulkGet)
+/*                for (auto &alias : m_portsPendingBulkGet)
                 {
                     auto &port = m_portList[alias];
                     if (port.m_type != Port::PHY)
@@ -3313,7 +3313,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     m_hostifBulker.set_entry_attribute(&m_bulkStatuses.back(), port.m_hif_id, &attr);
                 }
 
-                m_hostifBulker.flush();
+                m_hostifBulker.flush();*/
 
                 m_bulkAttributes.clear();
                 m_bulkStatuses.clear();
@@ -4815,14 +4815,12 @@ bool PortsOrch::initializePort(Port &port)
     // 3. get speed
     // 4. set host intfs operstatus accordingly
 
-    /* Create host interface 
+    /* Create host interface */
     if (!addHostIntfs(port, port.m_alias, port.m_hif_id))
     {
         SWSS_LOG_ERROR("Failed to create host interface for port %s", port.m_alias.c_str());
         return false;
     }
-will create them in bulk mode
-    */
 
     /* Check warm start states */
     vector<FieldValueTuple> tuples;
@@ -4920,8 +4918,8 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attrs.push_back(attr);
 
     //m_bulkStatuses.emplace_back();
-    /*sai_status_t status = */m_hostifBulker.create_entry(&host_intfs_id, (uint32_t)attrs.size(), attrs.data());
-/*    sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    /*sai_status_t status = m_hostifBulker.create_entry(&host_intfs_id, (uint32_t)attrs.size(), attrs.data());*/
+    sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create host interface for port %s", alias.c_str());
@@ -4931,7 +4929,7 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-*/
+
     SWSS_LOG_NOTICE("Create host interface for port %s in bulk mode, waiting for flush", alias.c_str());
 
     return true;
