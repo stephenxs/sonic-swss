@@ -11,6 +11,8 @@
 #include "aclorch.h"
 #include "neighorch.h"
 
+#define CFG_MUX_STATIC_ROUTE_TABLE_NAME "MUX_STATIC_ROUTE"
+
 enum MuxState
 {
     MUX_STATE_INIT,
@@ -140,6 +142,8 @@ const request_description_t mux_cfg_request_description = {
                 { "soc_ipv4", REQ_T_IP_PREFIX },
                 { "soc_ipv6", REQ_T_IP_PREFIX },
                 { "cable_type", REQ_T_STRING },
+                { "nexthop", REQ_T_IP },
+                { "alias", REQ_T_STRING },
             },
             { }
 };
@@ -199,6 +203,7 @@ private:
 
     bool handleMuxCfg(const Request&);
     bool handlePeerSwitch(const Request&);
+    bool handleMuxStaticRoute(const Request&);
 
     void updateNeighbor(const NeighborUpdate&);
     void updateFdb(const FdbUpdate&);

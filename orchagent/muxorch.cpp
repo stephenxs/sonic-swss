@@ -1241,6 +1241,7 @@ MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables,
 {
     handler_map_.insert(handler_pair(CFG_MUX_CABLE_TABLE_NAME, &MuxOrch::handleMuxCfg));
     handler_map_.insert(handler_pair(CFG_PEER_SWITCH_TABLE_NAME, &MuxOrch::handlePeerSwitch));
+    handler_map_.insert(handler_pair(CFG_MUX_STATIC_ROUTE_TABLE_NAME, &MuxOrch::handleMuxStaticRoute));
 
     neigh_orch_->attach(this);
     fdb_orch_->attach(this);
@@ -1362,6 +1363,53 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
     {
         SWSS_LOG_NOTICE("Mux peer ip '%s' delete (Not Implemented), peer name '%s'",
                          peer_ip.to_string().c_str(), peer_name.c_str());
+    }
+
+    return true;
+}
+
+bool MuxOrch::handleMuxStaticRoute(const Request& request)
+{
+    SWSS_LOG_ENTER();
+
+    const auto &destination = request.getKeyString(0);
+
+    IpAddress destIp(destination);
+
+    auto op = request.getOperation();
+    MuxCableOrch* mux_cb_orch = gDirectory.get<MuxCableOrch*>();
+
+    if (op == SET_COMMAND)
+    {
+        // Create P2P tunnel when peer_ip is available.
+        auto peer_ip = request.getAttrIP("nexthop");
+        auto alias = request.getAttrString("alias");
+        IpAddress peerIp(peer_ip);
+
+        if (mux_tunnel_id_ == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_NOTICE("Mux tunnel is not yet created");
+            return false;
+        }
+
+        auto mux_nh_id = create_nh_tunnel(mux_tunnel_id_, peerIp);
+        mux_tunnel_nh_[destIp] = {mux_nh_id, 1};
+
+        NextHopKey nhKey(destIp, alias);
+        mux_cb_orch->addTunnelRoute(nhKey);
+
+        IpPrefix pfx = destination;
+        create_route(pfx, mux_nh_id);
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Mux peer ip delete (Not Implemented)");
+        IpPrefix pfx = destIp.to_string();
+        remove_route(pfx);
+        NextHopKey nhKey(destIp, "unknown");
+        mux_cb_orch->removeTunnelRoute(nhKey);
+        remove_nh_tunnel(mux_tunnel_id_, destIp);
+        mux_tunnel_nh_.erase(destIp);
     }
 
     return true;
