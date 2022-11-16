@@ -173,7 +173,6 @@ static sai_object_id_t create_tunnel(
     sai_status_t status;
 
     sai_attribute_t attr;
-    sai_object_id_t overlay_if;
     vector<sai_attribute_t> tunnel_attrs;
     vector<sai_attribute_t> overlay_intf_attrs;
 
@@ -186,7 +185,7 @@ static sai_object_id_t create_tunnel(
     overlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
     overlay_intf_attrs.push_back(overlay_intf_attr);
 
-    status = sai_router_intfs_api->create_router_interface(&overlay_if, gSwitchId, (uint32_t)overlay_intf_attrs.size(), overlay_intf_attrs.data());
+    status = sai_router_intfs_api->create_router_interface(&mux_tunnel_overlay_rif_id_, gSwitchId, (uint32_t)overlay_intf_attrs.size(), overlay_intf_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         throw std::runtime_error("Can't create overlay interface");
@@ -197,7 +196,7 @@ static sai_object_id_t create_tunnel(
     tunnel_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_ATTR_OVERLAY_INTERFACE;
-    attr.value.oid = overlay_if;
+    attr.value.oid = mux_tunnel_overlay_rif_id_;
     tunnel_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
