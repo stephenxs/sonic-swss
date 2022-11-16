@@ -226,6 +226,10 @@ static sai_object_id_t create_tunnel(
         else
         {
             dscp_mode = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
+            // WorkAround: for pipe module we have to provide a default dscp value
+            attr.id = SAI_TUNNEL_ATTR_ENCAP_DSCP_VAL;
+            attr.value.u8 = 0;
+            tunnel_attrs.push_back(attr);
         }
         attr.id = SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE;
         attr.value.s32 = dscp_mode;
