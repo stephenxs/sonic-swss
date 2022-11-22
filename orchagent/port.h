@@ -84,6 +84,7 @@ public:
         TUNNEL,
         SUBPORT,
         SYSTEM,
+        RIF,
         UNKNOWN
     } ;
 

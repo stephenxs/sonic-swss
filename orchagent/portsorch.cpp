@@ -44,6 +44,7 @@ extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 extern sai_fdb_api_t *sai_fdb_api;
 extern sai_l2mc_group_api_t *sai_l2mc_group_api;
+extern sai_router_interface_api_t *sai_router_intfs_api;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
@@ -1560,6 +1561,27 @@ bool PortsOrch::bindUnbindAclTableGroup(Port &port,
             }
             break;
         }
+        case Port::RIF:
+        {
+            attr.id = ingress ?
+                SAI_ROUTER_INTERFACE_ATTR_INGRESS_ACL : SAI_ROUTER_INTERFACE_ATTR_EGRESS_ACL;
+            status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
+            if (SAI_STATUS_SUCCESS != status)
+            {
+                SWSS_LOG_ERROR("Failed to %s %s port with type %d rv %d",
+                               bind_str.c_str(), port.m_alias.c_str(), port.m_type, status);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("Bind acl %" PRIx64 " to rif %" PRIx64, attr.value.oid, port.m_rif_id);
+            }
+            break;
+        }
         default:
         {
             SWSS_LOG_ERROR("Failed to %s %s port with type %d",
@@ -1685,7 +1707,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t  port_oid,
         if (!getSaiAclBindPointType(port.m_type, bind_type))
         {
             SWSS_LOG_ERROR("Failed to bind ACL table to port %s with unknown type %d",
-                        port.m_alias.c_str(), port.m_type);
+                       port.m_alias.c_str(), port.m_type);
             return false;
         }
         sai_object_id_t bp_list[] = { bind_type };
@@ -5047,6 +5069,34 @@ bool PortsOrch::setBridgePortLearnMode(Port &port, string learn_mode)
     return true;
 }
 
+void PortsOrch::addRif(string rif_alias)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t rif_id;
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+    attr.value.oid = gVirtualRouterId;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
+    attrs.push_back(attr);
+
+    auto status = sai_router_intfs_api->create_router_interface(&rif_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't create overlay interface");
+    }
+
+    Port rif(rif_alias, Port::RIF);
+    rif.m_rif_id = rif_id;
+    m_portList[rif_alias] = rif;
+    saiOidToAlias[rif_id] = rif_alias;
+}
+
 bool PortsOrch::addVlan(string vlan_alias)
 {
     SWSS_LOG_ENTER();
@@ -6854,6 +6904,9 @@ bool PortsOrch::getSaiAclBindPointType(Port::Type           type,
             break;
         case Port::VLAN:
             sai_acl_bind_type = SAI_ACL_BIND_POINT_TYPE_VLAN;
+            break;
+        case Port::RIF:
+            sai_acl_bind_type = SAI_ACL_BIND_POINT_TYPE_ROUTER_INTERFACE;
             break;
         default:
             // Dealing with port, lag and vlan for now.

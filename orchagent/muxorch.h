@@ -219,7 +219,6 @@ private:
 
     IpAddress mux_peer_switch_ = 0x0;
     sai_object_id_t mux_tunnel_id_ = SAI_NULL_OBJECT_ID;
-    sai_object_id_t mux_tunnel_overlay_rif_id_ = SAI_NULL_OBJECT_ID;
 
     MuxCableTb mux_cable_tb_;
     MuxTunnelNHs mux_tunnel_nh_;

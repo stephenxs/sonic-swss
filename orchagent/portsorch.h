@@ -188,6 +188,8 @@ public:
     void setMACsecEnabledState(sai_object_id_t port_id, bool enabled);
     bool isMACsecPort(sai_object_id_t port_id) const;
 
+    void addRif(string rif_alias);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterSysPortTable;

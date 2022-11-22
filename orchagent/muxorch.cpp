@@ -176,27 +176,16 @@ static sai_object_id_t create_tunnel(
     vector<sai_attribute_t> tunnel_attrs;
     vector<sai_attribute_t> overlay_intf_attrs;
 
-    sai_attribute_t overlay_intf_attr;
-    overlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
-    overlay_intf_attr.value.oid = gVirtualRouterId;
-    overlay_intf_attrs.push_back(overlay_intf_attr);
-
-    overlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-    overlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
-    overlay_intf_attrs.push_back(overlay_intf_attr);
-
-    status = sai_router_intfs_api->create_router_interface(&mux_tunnel_overlay_rif_id_, gSwitchId, (uint32_t)overlay_intf_attrs.size(), overlay_intf_attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        throw std::runtime_error("Can't create overlay interface");
-    }
+    Port port;
+    gPortsOrch->addRif(MUX_TUNNEL);
+    gPortsOrch->getPort(MUX_TUNNEL, port);
 
     attr.id = SAI_TUNNEL_ATTR_TYPE;
     attr.value.s32 = SAI_TUNNEL_TYPE_IPINIP;
     tunnel_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_ATTR_OVERLAY_INTERFACE;
-    attr.value.oid = mux_tunnel_overlay_rif_id_;
+    attr.value.oid = port.m_rif_id;
     tunnel_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
