@@ -10,7 +10,9 @@
 #include "tokenize.h"
 #include "timer.h"
 #include "crmorch.h"
+#include "tunneldecaporch.h"
 #include "sai_serialize.h"
+#include "orchdaemon.h"
 
 using namespace std;
 using namespace swss;
@@ -28,6 +30,7 @@ extern sai_switch_api_t* sai_switch_api;
 extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
+extern Directory<Orch*> gDirectory;
 
 #define MIN_VLAN_ID 1    // 0 is a reserved VLAN ID
 #define MAX_VLAN_ID 4095 // 4096 is a reserved VLAN ID
@@ -82,6 +85,7 @@ static acl_bind_point_type_lookup_t aclBindPointTypeLookup =
 {
     { BIND_POINT_TYPE_PORT,        SAI_ACL_BIND_POINT_TYPE_PORT },
     { BIND_POINT_TYPE_PORTCHANNEL, SAI_ACL_BIND_POINT_TYPE_LAG  },
+    { BIND_POINT_TYPE_RIF,         SAI_ACL_BIND_POINT_TYPE_ROUTER_INTERFACE },
 };
 
 static acl_rule_attr_lookup_t aclL3ActionLookup =
@@ -89,6 +93,7 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
+    { ACTION_SET_TC,                           SAI_ACL_ENTRY_ATTR_ACTION_SET_TC },
 };
 
 static acl_rule_attr_lookup_t aclMirrorStageLookup =
@@ -136,7 +141,8 @@ static const acl_capabilities_t defaultAclActionsSupported =
             {
                 SAI_ACL_ACTION_TYPE_PACKET_ACTION,
                 SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
-                SAI_ACL_ACTION_TYPE_NO_NAT
+                SAI_ACL_ACTION_TYPE_NO_NAT,
+                SAI_ACL_ACTION_TYPE_SET_TC,
             },
             false
         }
@@ -292,7 +298,8 @@ static acl_table_action_list_lookup_t defaultAclActionList =
             {
                 ACL_STAGE_INGRESS,
                 {
-                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_SET_TC
                 }
             },
             {
@@ -1740,6 +1747,10 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         }
         actionData.parameter.oid = param_id;
     }
+    else if (attr_name == ACTION_SET_TC)
+    {
+        actionData.parameter.u32 = static_cast<sai_uint32_t>(atol(_attr_value.c_str()));
+    }
     else
     {
         return false;
@@ -3010,9 +3021,18 @@ void AclOrch::initDefaultTableTypes()
     AclTableTypeBuilder builder;
 
     addAclTableType(
+        builder.withName(TABLE_TYPE_MUX)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_ROUTER_INTERFACE)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
+            .build()
+    );
+
+    addAclTableType(
         builder.withName(TABLE_TYPE_L3)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_ROUTER_INTERFACE)
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
@@ -3024,6 +3044,7 @@ void AclOrch::initDefaultTableTypes()
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
             .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>{
                 {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}))
             .build()
@@ -4755,6 +4776,9 @@ bool AclOrch::getAclBindPortId(Port &port, sai_object_id_t &port_id)
             break;
         case Port::VLAN:
             port_id = port.m_vlan_info.vlan_oid;
+            break;
+        case Port::RIF:
+            port_id = port.m_rif_id;
             break;
         default:
             SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", port.m_alias.c_str(), port.m_type);
