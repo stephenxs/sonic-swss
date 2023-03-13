@@ -391,6 +391,9 @@ end
 
 if shp_enabled and shp_size == 0 then
     shp_size = math.ceil(accumulative_xoff / over_subscribe_ratio)
+    if shp_size == 0 then
+        shp_size = 655360
+    end
 end
 
 local pool_size
