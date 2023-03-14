@@ -372,6 +372,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
     string map_type_name = APP_BUFFER_POOL_TABLE_NAME;
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
+    string xoff;
 
     SWSS_LOG_DEBUG("object name:%s", object_name.c_str());
     if (m_buffer_type_maps[map_type_name]->find(object_name) != m_buffer_type_maps[map_type_name]->end())
@@ -466,6 +467,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                 attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_POOL_ATTR_XOFF_SIZE;
                 attribs.push_back(attr);
+                xoff = value;
             }
             else
             {
@@ -517,6 +519,15 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
             // "FLEX_COUNTER_STATUS"
             m_countersDb->hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
+        }
+
+        // Only publish the result when shared headroom pool is enabled and it has been successfully applied to SAI
+        if (!xoff.empty())
+        {
+            vector<FieldValueTuple> fvs;
+            fvs.emplace_back("xoff", xoff);
+            SWSS_LOG_INFO("Publishing the result after applying the shared headroom pool size %s to SAI", xoff.c_str());
+            m_publisher.publish(APP_BUFFER_POOL_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);
         }
     }
     else if (op == DEL_COMMAND)
