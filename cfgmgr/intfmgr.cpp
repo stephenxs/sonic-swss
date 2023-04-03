@@ -350,7 +350,7 @@ std::string IntfMgr::getIntfAdminStatus(const string &alias)
     }
     else if (!alias.compare(0, strlen("Po"), "Po"))
     {
-        portTable = &m_appLagTable;
+        portTable = &m_stateLagTable;
     }
     else
     {
