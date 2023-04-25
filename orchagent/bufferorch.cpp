@@ -839,6 +839,14 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             return task_process_status::task_failed;
         }
 
+        string old_buffer_profile_name;
+        if (doesObjectExist(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key, buffer_profile_field_name, old_buffer_profile_name)
+            && (old_buffer_profile_name == buffer_profile_name))
+        {
+            SWSS_LOG_INFO("Skip setting buffer queue %s to %s since it is not changed", key.c_str(), buffer_profile_name.c_str());
+            return task_process_status::task_success;
+        }
+
         SWSS_LOG_NOTICE("Set buffer queue %s to %s", key.c_str(), buffer_profile_name.c_str());
 
         setObjectReference(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key, buffer_profile_field_name, buffer_profile_name);
@@ -1038,6 +1046,14 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
             return task_process_status::task_failed;
         }
 
+        string old_buffer_profile_name;
+        if (doesObjectExist(m_buffer_type_maps, APP_BUFFER_PG_TABLE_NAME, key, buffer_profile_field_name, old_buffer_profile_name)
+            && (old_buffer_profile_name == buffer_profile_name))
+        {
+            SWSS_LOG_INFO("Skip setting buffer priority group %s to %s since it is not changed", key.c_str(), buffer_profile_name.c_str());
+            return task_process_status::task_success;
+        }
+
         SWSS_LOG_NOTICE("Set buffer PG %s to %s", key.c_str(), buffer_profile_name.c_str());
 
         setObjectReference(m_buffer_type_maps, APP_BUFFER_PG_TABLE_NAME, key, buffer_profile_field_name, buffer_profile_name);
@@ -1209,6 +1225,14 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
             return task_process_status::task_failed;
         }
 
+        string old_profile_name_list;
+        if (doesObjectExist(m_buffer_type_maps, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, old_profile_name_list)
+            && (old_profile_name_list == profile_name_list))
+        {
+            SWSS_LOG_INFO("Skip setting buffer ingress profile list %s to %s since it is not changed", key.c_str(), profile_name_list.c_str());
+            return task_process_status::task_success;
+        }
+
         setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
 
         attr.value.objlist.count = (uint32_t)profile_list.size();
@@ -1278,6 +1302,14 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
             }
             SWSS_LOG_ERROR("Failed resolving egress buffer profile reference specified for:%s", key.c_str());
             return task_process_status::task_failed;
+        }
+
+        string old_profile_name_list;
+        if (doesObjectExist(m_buffer_type_maps, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, old_profile_name_list)
+            && (old_profile_name_list == profile_name_list))
+        {
+            SWSS_LOG_INFO("Skip setting buffer egress profile list %s to %s since it is not changed", key.c_str(), profile_name_list.c_str());
+            return task_process_status::task_success;
         }
 
         setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
