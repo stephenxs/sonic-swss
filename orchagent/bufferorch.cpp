@@ -906,6 +906,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 if (port.m_queue_lock[ind])
                 {
                     SWSS_LOG_WARN("Queue %zd on port %s is locked, will retry", ind, port_name.c_str());
+                    removeObject(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key);
                     return task_process_status::task_need_retry;
                 }
                 queue_id = port.m_queue_ids[ind];
