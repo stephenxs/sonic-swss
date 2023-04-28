@@ -843,8 +843,15 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         if (doesObjectExist(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key, buffer_profile_field_name, old_buffer_profile_name)
             && (old_buffer_profile_name == buffer_profile_name))
         {
-            SWSS_LOG_INFO("Skip setting buffer queue %s to %s since it is not changed", key.c_str(), buffer_profile_name.c_str());
-            return task_process_status::task_success;
+            if (m_partiallyAppliedQueues.find(key) == m_partiallyAppliedQueues.end())
+            {
+                SWSS_LOG_INFO("Skip setting buffer queue %s to %s since it is not changed", key.c_str(), buffer_profile_name.c_str());
+                return task_process_status::task_success;
+            }
+            else
+            {
+                m_partiallyAppliedQueues.erase(key);
+            }
         }
 
         SWSS_LOG_NOTICE("Set buffer queue %s to %s", key.c_str(), buffer_profile_name.c_str());
@@ -862,6 +869,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         sai_buffer_profile = SAI_NULL_OBJECT_ID;
         SWSS_LOG_NOTICE("Remove buffer queue %s", key.c_str());
         removeObject(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key);
+        m_partiallyAppliedQueues.erase(key);
     }
     else
     {
@@ -906,7 +914,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 if (port.m_queue_lock[ind])
                 {
                     SWSS_LOG_WARN("Queue %zd on port %s is locked, will retry", ind, port_name.c_str());
-                    removeObject(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key);
+                    m_partiallyAppliedQueues.insert(key);
                     return task_process_status::task_need_retry;
                 }
                 queue_id = port.m_queue_ids[ind];
