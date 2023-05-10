@@ -101,22 +101,22 @@ void BufferOrch::initBufferReadyLists(DBConnector *applDb, DBConnector *confDb)
     if (WarmStart::isWarmStart())
     {
         Table pg_table(applDb, APP_BUFFER_PG_TABLE_NAME);
-        initBufferReadyList(pg_table, false);
+        initBufferReadyList(pg_table, false, "pg");
 
         Table queue_table(applDb, APP_BUFFER_QUEUE_TABLE_NAME);
-        initBufferReadyList(queue_table, false);
+        initBufferReadyList(queue_table, false, "q");
     }
     else
     {
         Table pg_table(confDb, CFG_BUFFER_PG_TABLE_NAME);
-        initBufferReadyList(pg_table, true);
+        initBufferReadyList(pg_table, true, "pg");
 
         Table queue_table(confDb, CFG_BUFFER_QUEUE_TABLE_NAME);
-        initBufferReadyList(queue_table, true);
+        initBufferReadyList(queue_table, true, "q");
     }
 }
 
-void BufferOrch::initBufferReadyList(Table& table, bool isConfigDb)
+void BufferOrch::initBufferReadyList(Table& table, bool isConfigDb, const string &type)
 {
     SWSS_LOG_ENTER();
 
@@ -136,7 +136,7 @@ void BufferOrch::initBufferReadyList(Table& table, bool isConfigDb)
         }
 
         // We need transform the key from config db format to appl db format
-        auto appldb_key = tokens[0] + delimiter + tokens[1];
+        auto appldb_key = type + tokens[0] + delimiter + tokens[1];
         m_ready_list[appldb_key] = false;
 
         auto &&port_names = tokenize(tokens[0], list_item_delimiter);
@@ -901,9 +901,10 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         }
     }
 
-    if (m_ready_list.find(key) != m_ready_list.end())
+    const auto ready_key = "q" + key;
+    if (m_ready_list.find(ready_key) != m_ready_list.end())
     {
-        m_ready_list[key] = true;
+        m_ready_list[ready_key] = true;
     }
     else
     {
@@ -1091,9 +1092,10 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
         }
     }
 
-    if (m_ready_list.find(key) != m_ready_list.end())
+    const auto &ready_key = "pg" + key;
+    if (m_ready_list.find(ready_key) != m_ready_list.end())
     {
-        m_ready_list[key] = true;
+        m_ready_list[ready_key] = true;
     }
     else
     {

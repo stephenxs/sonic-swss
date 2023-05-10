@@ -48,7 +48,7 @@ private:
     void clearBufferPoolWatermarkCounterIdList(const sai_object_id_t object_id);
     void initTableHandlers();
     void initBufferReadyLists(DBConnector *confDb, DBConnector *applDb);
-    void initBufferReadyList(Table& table, bool isConfigDb);
+    void initBufferReadyList(Table& table, bool isConfigDb, const std::string &type);
     void initFlexCounterGroupTable(void);
     void initBufferConstants();
     task_process_status processBufferPool(KeyOpFieldsValuesTuple &tuple);
