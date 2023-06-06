@@ -90,6 +90,7 @@ private:
 
     std::vector<Orch *> m_orchList;
     Select *m_select;
+    Select *m_notifications;
 
     void flush();
 };

@@ -96,6 +96,15 @@ public:
         : m_selectable(selectable)
         , m_orch(orch)
         , m_name(name)
+        , m_isNotification(false)
+    {
+    }
+
+    Executor(swss::Selectable *selectable, Orch *orch, const std::string &name, bool isNotification)
+        : m_selectable(selectable)
+        , m_orch(orch)
+        , m_name(name)
+        , m_isNotification(isNotification)
     {
     }
 
@@ -121,6 +130,11 @@ public:
         return m_name;
     }
 
+    virtual bool isNotification() const
+    {
+        return m_isNotification;
+    }
+
 protected:
     swss::Selectable *m_selectable;
     Orch *m_orch;
@@ -130,6 +144,8 @@ protected:
 
     // Get the underlying selectable
     swss::Selectable *getSelectable() const { return m_selectable; }
+
+    bool m_isNotification;
 };
 
 class Consumer : public Executor {
@@ -201,7 +217,7 @@ public:
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch();
 
-    std::vector<swss::Selectable*> getSelectables();
+    std::vector<swss::Selectable*> getSelectables(bool isNotification=false);
 
     // add the existing table data (left by warm reboot) to the consumer todo task list.
     size_t addExistingData(swss::Table *table);
