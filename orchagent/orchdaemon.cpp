@@ -71,6 +71,7 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
 {
     SWSS_LOG_ENTER();
     m_select = new Select();
+    m_notifications = new Select();
 }
 
 OrchDaemon::~OrchDaemon()
@@ -698,10 +699,12 @@ void OrchDaemon::start()
 {
     SWSS_LOG_ENTER();
     gSaiRedisLogRotate = false;
+    bool needCheckAllPortsReady = true;
 
     for (Orch *o : m_orchList)
     {
         m_select->addSelectables(o->getSelectables());
+        m_notifications->addSelectables(o->getSelectables(true));
     }
 
     auto tstart = std::chrono::high_resolution_clock::now();
@@ -714,6 +717,7 @@ void OrchDaemon::start()
         ret = m_select->select(&s, SELECT_TIMEOUT);
 
         auto tend = std::chrono::high_resolution_clock::now();
+        auto microtstart = std::chrono::high_resolution_clock::now();
 
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart);
 
@@ -759,7 +763,38 @@ void OrchDaemon::start()
 
         /* TODO: Abstract Orch class to have a specific todo list */
         for (Orch *o : m_orchList)
+        {
+            if (needCheckAllPortsReady)
+            {
+                if (gPortsOrch->allPortsReady())
+                    needCheckAllPortsReady = false;
+            }
+            else
+            {
+                auto microtend = std::chrono::high_resolution_clock::now();
+                auto microdiff = std::chrono::duration_cast<std::chrono::milliseconds>(microtend - microtstart);
+                if (microdiff.count() >= SELECT_TIMEOUT / 10)
+                {
+                    SWSS_LOG_INFO("Check notifications in a micro loop");
+                    microtstart = microtend;
+                    Selectable *s;
+                    int ret;
+
+                    do {
+                        ret = m_notifications->select(&s, 0);
+                        if (ret == Select::TIMEOUT)
+                            break;
+                        if (s)
+                        {
+                            auto *c = (Executor *)s;
+                            SWSS_LOG_INFO("Handle notification in a micro loop");
+                            c->execute();
+                        }
+                    } while (s != NULL);
+                }
+            }
             o->doTask();
+        }
 
         /*
          * Asked to check warm restart readiness.

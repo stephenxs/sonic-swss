@@ -5,7 +5,7 @@
 class Notifier : public Executor {
 public:
     Notifier(swss::NotificationConsumer *select, Orch *orch, const std::string &name)
-        : Executor(select, orch, name)
+        : Executor(select, orch, name, true)
     {
     }
 

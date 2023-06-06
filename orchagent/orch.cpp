@@ -60,11 +60,17 @@ Orch::~Orch()
     }
 }
 
-vector<Selectable *> Orch::getSelectables()
+vector<Selectable *> Orch::getSelectables(bool isNotification)
 {
     vector<Selectable *> selectables;
     for (auto& it : m_consumerMap)
     {
+        if (isNotification && !it.second.get()->isNotification())
+        {
+            SWSS_LOG_INFO("Selectable %s is not notification, skip", it.second.get()->getName().c_str());
+            continue;
+        }
+        SWSS_LOG_INFO("Selectable %s is added %s", it.second.get()->getName().c_str(), isNotification ? "as notification" : "as normal table");
         selectables.push_back(it.second.get());
     }
     return selectables;
