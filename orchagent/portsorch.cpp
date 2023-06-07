@@ -4576,40 +4576,20 @@ void PortsOrch::initializeVoqs(Port &port)
     SWSS_LOG_INFO("Get voqs for port %s", port.m_alias.c_str());
 }
 
-void PortsOrch::initializeQueues(Port &port)
+void PortsOrch::initializeQoSParameters(Port &port)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
-    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    sai_attribute_t attr[4];
+
+    attr[0].id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
+    attr[1].id = SAI_PORT_ATTR_NUMBER_OF_INGRESS_PRIORITY_GROUPS;
+    attr[2].id = SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 3, attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get number of queues for port %s rv:%d", port.m_alias.c_str(), status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            throw runtime_error("PortsOrch initialization failure.");
-        }
-    }
-    SWSS_LOG_INFO("Get %d queues for port %s", attr.value.u32, port.m_alias.c_str());
-
-    port.m_queue_ids.resize(attr.value.u32);
-    port.m_queue_lock.resize(attr.value.u32);
-
-    if (attr.value.u32 == 0)
-    {
-        return;
-    }
-
-    attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
-    attr.value.objlist.count = (uint32_t)port.m_queue_ids.size();
-    attr.value.objlist.list = port.m_queue_ids.data();
-
-    status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to get queue list for port %s rv:%d", port.m_alias.c_str(), status);
+        SWSS_LOG_ERROR("Failed to get number of QoS objects for port %s rv:%d", port.m_alias.c_str(), status);
         task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
         if (handle_status != task_process_status::task_success)
         {
@@ -4617,40 +4597,23 @@ void PortsOrch::initializeQueues(Port &port)
         }
     }
 
-    SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
-}
+    port.m_queue_ids.resize(attr[0].value.u32);
+    port.m_queue_lock.resize(attr[0].value.u32);
+    attr[0].id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
+    attr[0].value.objlist.count = (uint32_t)port.m_queue_ids.size();
+    attr[0].value.objlist.list = port.m_queue_ids.data();
 
-void PortsOrch::initializeSchedulerGroups(Port &port)
-{
-    std::vector<sai_object_id_t> scheduler_group_ids;
-    SWSS_LOG_ENTER();
+    port.m_priority_group_ids.resize(attr[1].value.u32);
+    attr[1].id = SAI_PORT_ATTR_INGRESS_PRIORITY_GROUP_LIST;
+    attr[1].value.objlist.count = (uint32_t)port.m_priority_group_ids.size();
+    attr[1].value.objlist.list = port.m_priority_group_ids.data();
 
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS;
-    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to get number of scheduler groups for port:%s", port.m_alias.c_str());
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            throw runtime_error("PortsOrch initialization failure.");
-        }
-    }
-    SWSS_LOG_INFO("Got %d number of scheduler groups for port %s", attr.value.u32, port.m_alias.c_str());
+    port.m_scheduler_group_ids.resize(attr[2].value.u32);
+    attr[2].id = SAI_PORT_ATTR_QOS_SCHEDULER_GROUP_LIST;
+    attr[2].value.objlist.count = (uint32_t)port.m_scheduler_group_ids.size();
+    attr[2].value.objlist.list = port.m_scheduler_group_ids.data();
 
-    scheduler_group_ids.resize(attr.value.u32);
-
-    if (attr.value.u32 == 0)
-    {
-        return;
-    }
-
-    attr.id = SAI_PORT_ATTR_QOS_SCHEDULER_GROUP_LIST;
-    attr.value.objlist.count = (uint32_t)scheduler_group_ids.size();
-    attr.value.objlist.list = scheduler_group_ids.data();
-
-    status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    status = sai_port_api->get_port_attribute(port.m_port_id, 3, attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get scheduler group list for port %s rv:%d", port.m_alias.c_str(), status);
@@ -4661,49 +4624,7 @@ void PortsOrch::initializeSchedulerGroups(Port &port)
         }
     }
 
-    SWSS_LOG_INFO("Got scheduler groups for port %s", port.m_alias.c_str());
-}
-
-void PortsOrch::initializePriorityGroups(Port &port)
-{
-    SWSS_LOG_ENTER();
-
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_NUMBER_OF_INGRESS_PRIORITY_GROUPS;
-    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to get number of priority groups for port %s rv:%d", port.m_alias.c_str(), status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            throw runtime_error("PortsOrch initialization failure.");
-        }
-    }
-    SWSS_LOG_INFO("Get %d priority groups for port %s", attr.value.u32, port.m_alias.c_str());
-
-    port.m_priority_group_ids.resize(attr.value.u32);
-
-    if (attr.value.u32 == 0)
-    {
-        return;
-    }
-
-    attr.id = SAI_PORT_ATTR_INGRESS_PRIORITY_GROUP_LIST;
-    attr.value.objlist.count = (uint32_t)port.m_priority_group_ids.size();
-    attr.value.objlist.list = port.m_priority_group_ids.data();
-
-    status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Fail to get priority group list for port %s rv:%d", port.m_alias.c_str(), status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            throw runtime_error("PortsOrch initialization failure.");
-        }
-    }
-    SWSS_LOG_INFO("Get priority groups for port %s", port.m_alias.c_str());
+    return;
 }
 
 void PortsOrch::initializePortBufferMaximumParameters(Port &port)
@@ -4736,9 +4657,7 @@ bool PortsOrch::initializePort(Port &port)
 
     SWSS_LOG_NOTICE("Initializing port alias:%s pid:%" PRIx64, port.m_alias.c_str(), port.m_port_id);
 
-    initializePriorityGroups(port);
-    initializeQueues(port);
-    initializeSchedulerGroups(port);
+    initializeQoSParameters(port);
     initializePortBufferMaximumParameters(port);
 
     /* Create host interface */
