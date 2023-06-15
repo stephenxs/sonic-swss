@@ -1508,12 +1508,13 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
+    //sai_attribute_t attr;
     sai_status_t    sai_status;
 
     const auto it = m_scheduler_group_port_info.find(port.m_port_id);
     if (it == m_scheduler_group_port_info.end())
     {
+        #if 0
         /* Get max sched groups count */
         attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS;
         sai_status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
@@ -1544,14 +1545,16 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
                 return SAI_NULL_OBJECT_ID;
             }
         }
+        #endif
 
+        auto groups_count = port.m_scheduler_group_ids.size();
         m_scheduler_group_port_info[port.m_port_id] = {
-            .groups = std::move(groups),
+            .groups = port.m_scheduler_group_ids,
             .child_groups = std::vector<std::vector<sai_object_id_t>>(groups_count),
             .group_has_been_initialized = std::vector<bool>(groups_count)
         };
 
-        SWSS_LOG_INFO("Port %s has been initialized with %u group(s)", port.m_alias.c_str(), groups_count);
+        SWSS_LOG_INFO("Port %s has been initialized with %lu group(s)", port.m_alias.c_str(), groups_count);
     }
 
     /* Lookup groups to which queue belongs */
@@ -1570,11 +1573,18 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
                 continue;
             }
 
-            attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;//Number of queues/groups childs added to scheduler group
-            sai_status = sai_scheduler_group_api->get_scheduler_group_attribute(group_id, 1, &attr);
+            sai_attribute_t attrs[2];
+
+            attrs[0].id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;//Number of queues/groups childs added to scheduler group
+
+            sai_object_id_t local_ids[32];
+            attrs[1].id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
+            attrs[1].value.objlist.list = local_ids;
+            attrs[1].value.objlist.count = 32;
+            sai_status = sai_scheduler_group_api->get_scheduler_group_attribute(group_id, 2, attrs);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to get child count for scheduler group:0x%" PRIx64 " of port:%s", group_id, port.m_alias.c_str());
+                SWSS_LOG_ERROR("Failed to get child information for scheduler group:0x%" PRIx64 " of port:%s", group_id, port.m_alias.c_str());
                 task_process_status handle_status = handleSaiGetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
                 if (handle_status != task_process_status::task_success)
                 {
@@ -1582,7 +1592,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
                 }
             }
 
-            uint32_t child_count = attr.value.u32;
+            uint32_t child_count = attrs[0].value.u32;
 
             SWSS_LOG_INFO("Port %s group 0x%" PRIx64 " has been initialized with %u child group(s)", port.m_alias.c_str(), group_id, child_count);
             scheduler_group_port_info.group_has_been_initialized[ii] = true;
@@ -1592,7 +1602,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             {
                 continue;
             }
-
+#if 0
             vector<sai_object_id_t> child_groups(child_count);
             attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
             attr.value.objlist.list = child_groups.data();
@@ -1607,8 +1617,8 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
                     return SAI_NULL_OBJECT_ID;
                 }
             }
-
-            scheduler_group_port_info.child_groups[ii] = std::move(child_groups);
+#endif
+            scheduler_group_port_info.child_groups[ii] = vector<sai_object_id_t>(local_ids, local_ids + child_count);//std::move(child_groups);
         }
 
         for (const auto& child_group_id: child_groups_per_group)
