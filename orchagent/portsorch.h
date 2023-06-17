@@ -83,6 +83,9 @@ struct queueInfo
     sai_uint8_t index;
 };
 
+typedef map<sai_uint32_t, vector<sai_object_id_t>> attrStore;
+typedef map<sai_object_id_t, attrStore> portAttrCache;
+
 class PortsOrch : public Orch, public Subject
 {
 public:
@@ -199,6 +202,8 @@ public:
 
     void setMACsecEnabledState(sai_object_id_t port_id, bool enabled);
     bool isMACsecPort(sai_object_id_t port_id) const;
+
+    bool getSchedulerGroupFromQueue(Port &port, sai_object_id_t queue_id, sai_object_id_t &scheduler_group_id);
 
 private:
     unique_ptr<Table> m_counterTable;
