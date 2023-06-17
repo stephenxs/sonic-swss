@@ -222,22 +222,11 @@ private:
 
     task_process_status handleGlobalQosMap(const string &op, KeyOpFieldsValuesTuple &tuple);
 
-    sai_object_id_t getSchedulerGroup(const Port &port, const sai_object_id_t queue_id);
-
     bool applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id);
     bool applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_id_t sai_wred_profile);
     bool applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
 private:
     qos_table_handler_map m_qos_handler_map;
-
-    struct SchedulerGroupPortInfo_t
-    {
-        std::vector<sai_object_id_t> groups;
-        std::vector<std::vector<sai_object_id_t>> child_groups;
-        std::vector<bool> group_has_been_initialized;
-    };
-
-    std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;
 
     friend QosMapHandler;
     friend DscpToTcMapHandler;

@@ -4608,7 +4608,8 @@ void PortsOrch::initializeQoSParameters(Port &port)
     attr[1].value.objlist.count = (uint32_t)port.m_priority_group_ids.size();
     attr[1].value.objlist.list = port.m_priority_group_ids.data();
 
-    port.m_scheduler_group_ids.resize(attr[2].value.u32);
+    auto scheduler_group_size = attr[2].value.u32;
+    port.m_scheduler_group_ids.resize(scheduler_group_size);
     attr[2].id = SAI_PORT_ATTR_QOS_SCHEDULER_GROUP_LIST;
     attr[2].value.objlist.count = (uint32_t)port.m_scheduler_group_ids.size();
     attr[2].value.objlist.list = port.m_scheduler_group_ids.data();
@@ -4624,7 +4625,63 @@ void PortsOrch::initializeQoSParameters(Port &port)
         }
     }
 
+    vector<sai_object_key_t> object_keys(scheduler_group_size);
+    vector<uint32_t> attr_count(scheduler_group_size);
+    vector<sai_attribute_t*> attr_list(scheduler_group_size);
+    vector<sai_attribute_t> attr_data(scheduler_group_size);
+    vector<sai_status_t> statuses(scheduler_group_size);
+    for(auto ii = 0u; ii < scheduler_group_size; ii++)
+    {
+        object_keys[ii].key.object_id = port.m_scheduler_group_ids[ii];
+        attr_data[ii].id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;
+        attr_list[ii] = &attr_data[ii];
+        attr_count[ii] = 1;
+    }
+    status = sai_bulk_get_attribute(gSwitchId, SAI_OBJECT_TYPE_SCHEDULER_GROUP, scheduler_group_size, object_keys.data(),
+                                    attr_count.data(), attr_list.data(), statuses.data());
+
+    auto nonempty_group_index = 0u;
+    for(auto ii = 0u; ii < scheduler_group_size; ii++)
+    {
+        auto childgroup_size = attr_data[ii].value.u32;
+        if (nonempty_group_index != ii)
+        {
+            object_keys[nonempty_group_index].key.object_id = object_keys[ii].key.object_id;
+        }
+        port.m_scheduler_subgroup_ids.emplace_back(vector<sai_object_id_t>(childgroup_size));
+        if (childgroup_size != 0)
+        {
+            attr_data[nonempty_group_index].id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
+            attr_data[nonempty_group_index].value.objlist.count = childgroup_size;
+            attr_data[nonempty_group_index].value.objlist.list = port.m_scheduler_subgroup_ids.back().data();
+            attr_list[nonempty_group_index] = &attr_data[nonempty_group_index];
+            nonempty_group_index++;
+        }
+    }
+    status = sai_bulk_get_attribute(gSwitchId, SAI_OBJECT_TYPE_SCHEDULER_GROUP, nonempty_group_index, object_keys.data(),
+                                    attr_count.data(), attr_list.data(), statuses.data());
+
     return;
+}
+
+bool PortsOrch::getSchedulerGroupFromQueue(Port &port, sai_object_id_t queue_id, sai_object_id_t &scheduler_group_id)
+{
+    uint32_t index = 0;
+    for (auto &group : port.m_scheduler_subgroup_ids)
+    {
+        for (auto &subgroup : group)
+        {
+            if (subgroup == queue_id)
+            {
+                scheduler_group_id = port.m_scheduler_group_ids[index];
+                SWSS_LOG_INFO("Find group %" PRIx64 " index %u for subgroup %" PRIx64 "\n", scheduler_group_id, index, queue_id);
+                return true;
+            }
+        }
+        index ++;
+    }
+
+    return false;
 }
 
 void PortsOrch::initializePortBufferMaximumParameters(Port &port)

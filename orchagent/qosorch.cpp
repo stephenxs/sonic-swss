@@ -1504,135 +1504,6 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer, KeyOpField
     return task_process_status::task_success;
 }
 
-sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id_t queue_id)
-{
-    SWSS_LOG_ENTER();
-
-    //sai_attribute_t attr;
-    sai_status_t    sai_status;
-
-    const auto it = m_scheduler_group_port_info.find(port.m_port_id);
-    if (it == m_scheduler_group_port_info.end())
-    {
-        #if 0
-        /* Get max sched groups count */
-        attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS;
-        sai_status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-        if (SAI_STATUS_SUCCESS != sai_status)
-        {
-            SWSS_LOG_ERROR("Failed to get number of scheduler groups for port:%s", port.m_alias.c_str());
-            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, sai_status);
-            if (handle_status != task_process_status::task_success)
-            {
-                return SAI_NULL_OBJECT_ID;
-            }
-        }
-
-        /* Get total groups list on the port */
-        uint32_t groups_count = attr.value.u32;
-        std::vector<sai_object_id_t> groups(groups_count);
-
-        attr.id = SAI_PORT_ATTR_QOS_SCHEDULER_GROUP_LIST;
-        attr.value.objlist.list = groups.data();
-        attr.value.objlist.count = groups_count;
-        sai_status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-        if (SAI_STATUS_SUCCESS != sai_status)
-        {
-            SWSS_LOG_ERROR("Failed to get scheduler group list for port:%s", port.m_alias.c_str());
-            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, sai_status);
-            if (handle_status != task_process_status::task_success)
-            {
-                return SAI_NULL_OBJECT_ID;
-            }
-        }
-        #endif
-
-        auto groups_count = port.m_scheduler_group_ids.size();
-        m_scheduler_group_port_info[port.m_port_id] = {
-            .groups = port.m_scheduler_group_ids,
-            .child_groups = std::vector<std::vector<sai_object_id_t>>(groups_count),
-            .group_has_been_initialized = std::vector<bool>(groups_count)
-        };
-
-        SWSS_LOG_INFO("Port %s has been initialized with %lu group(s)", port.m_alias.c_str(), groups_count);
-    }
-
-    /* Lookup groups to which queue belongs */
-    auto& scheduler_group_port_info = m_scheduler_group_port_info[port.m_port_id];
-    const auto& groups = scheduler_group_port_info.groups;
-    for (uint32_t ii = 0; ii < groups.size() ; ii++)
-    {
-        const auto& group_id = groups[ii];
-        const auto& child_groups_per_group = scheduler_group_port_info.child_groups[ii];
-        if (child_groups_per_group.empty())
-        {
-            if (scheduler_group_port_info.group_has_been_initialized[ii])
-            {
-                // skip this iteration if it has been initialized which means there're no children in this group
-                SWSS_LOG_INFO("No child group for port %s group 0x%" PRIx64 ", skip", port.m_alias.c_str(), group_id);
-                continue;
-            }
-
-            sai_attribute_t attrs[2];
-
-            attrs[0].id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;//Number of queues/groups childs added to scheduler group
-
-            sai_object_id_t local_ids[32];
-            attrs[1].id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
-            attrs[1].value.objlist.list = local_ids;
-            attrs[1].value.objlist.count = 32;
-            sai_status = sai_scheduler_group_api->get_scheduler_group_attribute(group_id, 2, attrs);
-            if (SAI_STATUS_SUCCESS != sai_status)
-            {
-                SWSS_LOG_ERROR("Failed to get child information for scheduler group:0x%" PRIx64 " of port:%s", group_id, port.m_alias.c_str());
-                task_process_status handle_status = handleSaiGetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
-                if (handle_status != task_process_status::task_success)
-                {
-                    return SAI_NULL_OBJECT_ID;
-                }
-            }
-
-            uint32_t child_count = attrs[0].value.u32;
-
-            SWSS_LOG_INFO("Port %s group 0x%" PRIx64 " has been initialized with %u child group(s)", port.m_alias.c_str(), group_id, child_count);
-            scheduler_group_port_info.group_has_been_initialized[ii] = true;
-
-            // skip this iteration if there're no children in this group
-            if (child_count == 0)
-            {
-                continue;
-            }
-#if 0
-            vector<sai_object_id_t> child_groups(child_count);
-            attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
-            attr.value.objlist.list = child_groups.data();
-            attr.value.objlist.count = child_count;
-            sai_status = sai_scheduler_group_api->get_scheduler_group_attribute(group_id, 1, &attr);
-            if (SAI_STATUS_SUCCESS != sai_status)
-            {
-                SWSS_LOG_ERROR("Failed to get child list for scheduler group:0x%" PRIx64 " of port:%s", group_id, port.m_alias.c_str());
-                task_process_status handle_status = handleSaiGetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
-                if (handle_status != task_process_status::task_success)
-                {
-                    return SAI_NULL_OBJECT_ID;
-                }
-            }
-#endif
-            scheduler_group_port_info.child_groups[ii] = vector<sai_object_id_t>(local_ids, local_ids + child_count);//std::move(child_groups);
-        }
-
-        for (const auto& child_group_id: child_groups_per_group)
-        {
-            if (child_group_id == queue_id)
-            {
-                return group_id;
-            }
-        }
-    }
-
-    return SAI_NULL_OBJECT_ID;
-}
-
 bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id)
 {
     SWSS_LOG_ENTER();
@@ -1645,8 +1516,9 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
 
     const sai_object_id_t queue_id = port.m_queue_ids[queue_ind];
 
-    const sai_object_id_t group_id = getSchedulerGroup(port, queue_id);
-    if(group_id == SAI_NULL_OBJECT_ID)
+    sai_object_id_t group_id;// = getSchedulerGroup(port, queue_id);
+
+    if(!gPortsOrch->getSchedulerGroupFromQueue(port, queue_id, group_id))
     {
         SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %zu", port.m_alias.c_str(), queue_ind);
         return false;
