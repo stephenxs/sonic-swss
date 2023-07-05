@@ -78,7 +78,11 @@ for i = n, 1, -1 do
                             if time_left <= poll_time then
                                 redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
                                 redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
-                                redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm","pfc_duration","' .. tostring(pfc_duration) .. '","pfc_duration_last","' .. tostring(pfc_duration_last) .. '"]')
+                                local occupancy_string = '"occupancy","' .. tostring(occupancy_bytes) .. '",'
+                                local packets_string = '"packets","' .. tostring(packets) .. '","packets_last","' .. tostring(packets_last) .. '",'
+                                local pfc_rx_packets_string = '"pfc_rx_packets","' .. tostring(pfc_rx_packets) .. '","pfc_rx_packets_last","' .. tostring(pfc_rx_packets_last) .. '",'
+                                local storm_condition_string = '"pfc_duration","' .. tostring(pfc_duration) .. '","pfc_duration_last","' .. tostring(pfc_duration_last) .. '"'
+                                redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm",' .. occupancy_string .. packets_string .. pfc_rx_packets_string .. storm_condition_string .. ']')
                                 is_deadlock = true
                                 time_left = detection_time
                             else
