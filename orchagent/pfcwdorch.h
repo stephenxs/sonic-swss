@@ -52,7 +52,7 @@ public:
     task_process_status deleteEntry(const string& name);
 
 protected:
-    virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
+    virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") = 0;
 
 private:
 
@@ -86,7 +86,7 @@ public:
     void doTask() override;
 
 protected:
-    bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) override;
+    bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") override;
 
 private:
     struct PfcWdQueueEntry
