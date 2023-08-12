@@ -55,6 +55,8 @@ for i = n, 1, -1 do
                     pfc_rx_packets = tonumber(pfc_rx_packets)
                     pfc_duration =  tonumber(pfc_duration)
 
+                    local check_timestamp_struct = redis.call('TIME')
+                    local check_timestamp_string = tostring(check_timestamp_struct[1]) .. '.' .. tostring(check_timestamp_struct[2])
                     local packets_last = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last')
                     local pfc_rx_packets_last = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
                     local pfc_duration_last = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
@@ -81,8 +83,10 @@ for i = n, 1, -1 do
                                 local occupancy_string = '"occupancy","' .. tostring(occupancy_bytes) .. '",'
                                 local packets_string = '"packets","' .. tostring(packets) .. '","packets_last","' .. tostring(packets_last) .. '",'
                                 local pfc_rx_packets_string = '"pfc_rx_packets","' .. tostring(pfc_rx_packets) .. '","pfc_rx_packets_last","' .. tostring(pfc_rx_packets_last) .. '",'
-                                local storm_condition_string = '"pfc_duration","' .. tostring(pfc_duration) .. '","pfc_duration_last","' .. tostring(pfc_duration_last) .. '"'
-                                redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm",' .. occupancy_string .. packets_string .. pfc_rx_packets_string .. storm_condition_string .. ']')
+                                local storm_condition_string = '"pfc_duration","' .. tostring(pfc_duration) .. '","pfc_duration_last","' .. tostring(pfc_duration_last) .. '",'
+                                local timestamp_last = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'POLL_TIMESTAMP_last')
+                                local timestamps = '"timestamp","' .. check_timestamp_string .. '","timestamp_last","' .. timestamp_last .. '"'
+                                redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm",' .. occupancy_string .. packets_string .. pfc_rx_packets_string .. storm_condition_string .. timestamps .. ']')
                                 is_deadlock = true
                                 time_left = detection_time
                             else
@@ -99,6 +103,7 @@ for i = n, 1, -1 do
                     -- Save values for next run
                     redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last', packets)
                     redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_DETECTION_TIME_LEFT', time_left)
+                    redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'POLL_TIMESTAMP_last', check_timestamp_string)
                     if is_deadlock == false then
                         redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last', pfc_rx_packets)
                         redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last', pfc_duration)
