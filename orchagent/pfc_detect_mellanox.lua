@@ -12,8 +12,7 @@ local rets = {}
 
 redis.call('SELECT', counters_db)
 
--- Handle corner case: the scheduling latency is very long
--- In case the scheduling latency is very long, the effective poll time should be the scheduling latency
+-- Record the polling time
 local timestamp_last = redis.call('HGET', 'TIMESTAMP', 'pfcwd_poll_timestamp_last')
 local timestamp_struct = redis.call('TIME')
 local timestamp_current = timestamp_struct[1] + timestamp_struct[2] / 1000000
