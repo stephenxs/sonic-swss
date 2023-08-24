@@ -14,17 +14,17 @@ redis.call('SELECT', counters_db)
 
 -- Handle corner case: the scheduling latency is very long
 -- In case the scheduling latency is very long, the effective poll time should be the scheduling latency
-local timestamp_last = redis.call('HGET', 'TIMESTAMP', 'POLL_TIMESTAMP_last')
+local timestamp_last = redis.call('HGET', 'TIMESTAMP', 'pfcwd_poll_timestamp_last')
 local timestamp_struct = redis.call('TIME')
 local timestamp_current = timestamp_struct[1] + timestamp_struct[2] / 1000000
 local timestamp_string = tostring(timestamp_current)
-redis.call('HSET', 'TIMESTAMP', 'POLL_TIMESTAMP_last', timestamp_string)
+redis.call('HSET', 'TIMESTAMP', 'pfcwd_poll_timestamp_last', timestamp_string)
 local real_poll_time = poll_time
-local poll_time_adjust_string = redis.call('HGET', 'TIMESTAMP', 'poll_time_adjust')
+local poll_time_adjust_string = redis.call('HGET', 'TIMESTAMP', 'pfcwd_poll_time_adjust')
 local poll_time_adjust = 0
 local new_adjust = 0
 if poll_time_adjust_string ~= false then
-    redis.call('HDEL', 'TIMESTAMP', 'poll_time_adjust')
+    redis.call('HDEL', 'TIMESTAMP', 'pfcwd_poll_time_adjust')
     poll_time_adjust = tonumber(poll_time_adjust_string)
 end
 if timestamp_last ~= false then
@@ -35,7 +35,7 @@ if timestamp_last ~= false then
         real_poll_time = poll_time
     else
         if new_adjust > 0 then
-            redis.call('HSET', 'TIMESTAMP', 'poll_time_adjust', new_adjust)
+            redis.call('HSET', 'TIMESTAMP', 'pfcwd_poll_time_adjust', new_adjust)
         end
     end
 end
