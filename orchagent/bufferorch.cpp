@@ -716,7 +716,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
                 else if (SAI_STATUS_SUCCESS != sai_status)
                 {
-                    SWSS_LOG_NOTICE("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry one more time", object_name.c_str(), sai_object, sai_status);
+                    SWSS_LOG_NOTICE("Unable to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry one more time", object_name.c_str(), sai_object, sai_status);
                     attribs_to_retry.push_back(attribute);
                 }
             }
