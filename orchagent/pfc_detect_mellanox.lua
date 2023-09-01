@@ -18,27 +18,41 @@ local timestamp_last = redis.call('HGET', 'TIMESTAMP', 'pfcwd_poll_timestamp_las
 local timestamp_struct = redis.call('TIME')
 local timestamp_current = timestamp_struct[1] + timestamp_struct[2] / 1000000
 local timestamp_string = tostring(timestamp_current)
-redis.call('HSET', 'TIMESTAMP', 'pfcwd_poll_timestamp_last', timestamp_string)
 local real_poll_time = poll_time
 local poll_time_adjust_string = redis.call('HGET', 'TIMESTAMP', 'pfcwd_poll_time_adjust')
 local poll_time_adjust = 0
 local new_adjust = 0
+local effective_poll_time = 0
 if poll_time_adjust_string ~= false then
     redis.call('HDEL', 'TIMESTAMP', 'pfcwd_poll_time_adjust')
     poll_time_adjust = tonumber(poll_time_adjust_string)
 end
 if timestamp_last ~= false then
     real_poll_time = (timestamp_current - tonumber(timestamp_last)) * 1000000
+    local pfcwd_min_poll_time = redis.call('HGET', 'TIMESTAMP', 'pfcwd_min_poll_time')
+    if pfcwd_min_poll_time == false or tonumber(pfcwd_min_poll_time) > real_poll_time then
+        redis.call('HSET', 'TIMESTAMP', 'pfcwd_min_poll_time', real_poll_time)
+    end
+    local pfcwd_max_poll_time = redis.call('HGET', 'TIMESTAMP', 'pfcwd_max_poll_time')
+    if pfcwd_max_poll_time == false or tonumber(pfcwd_max_poll_time) < real_poll_time then
+        redis.call('HSET', 'TIMESTAMP', 'pfcwd_max_poll_time', real_poll_time)
+    end
+    if real_poll_time < poll_time * 0.5 then
+        -- Skip this occurance since the interval is too short and Write poll_time_adjust back
+        redis.call('HSET', 'TIMESTAMP', 'pfcwd_poll_time_adjust', poll_time_adjust_string)
+        return rets
+    end
     new_adjust = real_poll_time - poll_time
-    real_poll_time = real_poll_time + poll_time_adjust
-    if real_poll_time < poll_time then
-        real_poll_time = poll_time
+    effective_poll_time = real_poll_time + poll_time_adjust
+    if effective_poll_time < poll_time then
+        effective_poll_time = poll_time
     else
         if new_adjust > 0 then
             redis.call('HSET', 'TIMESTAMP', 'pfcwd_poll_time_adjust', new_adjust)
         end
     end
 end
+redis.call('HSET', 'TIMESTAMP', 'pfcwd_poll_timestamp_last', timestamp_string)
 
 -- Iterate through each queue
 local n = table.getn(KEYS)
@@ -84,6 +98,7 @@ for i = n, 1, -1 do
                     pfc_duration =  tonumber(pfc_duration)
 
                     local packets_last = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last')
+                    local occupancy_bytes_last = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES' .. '_last')
                     local pfc_rx_packets_last = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
                     local pfc_duration_last = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
                     -- DEBUG CODE START. Uncomment to enable
@@ -91,14 +106,15 @@ for i = n, 1, -1 do
                     -- DEBUG CODE END.
 
                     -- If this is not a first run, then we have last values available
-                    if packets_last and pfc_rx_packets_last and pfc_duration_last then
+                    if packets_last and pfc_rx_packets_last and pfc_duration_last and occupancy_bytes_last then
                         packets_last = tonumber(packets_last)
+                        occupancy_bytes_last = tonumber(occupancy_bytes_last)
                         pfc_rx_packets_last = tonumber(pfc_rx_packets_last)
                         pfc_duration_last = tonumber(pfc_duration_last)
-                        local storm_condition = (pfc_duration - pfc_duration_last) > (real_poll_time * 0.8)
+                        local storm_condition = (pfc_duration - pfc_duration_last) > (effective_poll_time * 0.8)
 
                         -- Check actual condition of queue being in PFC storm
-                        if (occupancy_bytes > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0) or
+                        if (occupancy_bytes > 0 and occupancy_bytes_last > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0) or
                             -- DEBUG CODE START. Uncomment to enable
                             (debug_storm == "enabled") or
                             -- DEBUG CODE END.
@@ -106,10 +122,11 @@ for i = n, 1, -1 do
                             if time_left <= poll_time then
                                 redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
                                 redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
-                                local occupancy_string = '"occupancy","' .. tostring(occupancy_bytes) .. '",'
+                                local occupancy_string = '"occupancy","' .. tostring(occupancy_bytes) .. '","occupancy_last","' .. tostring(occupancy_bytes_last) .. '",'
                                 local packets_string = '"packets","' .. tostring(packets) .. '","packets_last","' .. tostring(packets_last) .. '",'
                                 local pfc_rx_packets_string = '"pfc_rx_packets","' .. tostring(pfc_rx_packets) .. '","pfc_rx_packets_last","' .. tostring(pfc_rx_packets_last) .. '",'
-                                local storm_condition_string = '"pfc_duration","' .. tostring(pfc_duration) .. '","pfc_duration_last","' .. tostring(pfc_duration_last) .. '",'
+                                local storm_condition_string = '"storm_condition","' .. tostring((pfc_duration - pfc_duration_last) / effective_poll_time) .. '",'
+                                storm_condition_string = storm_condition_string .. '"pfc_duration","' .. tostring(pfc_duration) .. '","pfc_duration_last","' .. tostring(pfc_duration_last) .. '",'
                                 local timestamps = '"timestamp","' .. timestamp_string .. '","timestamp_last","' .. timestamp_last .. '","real_poll_time","' .. real_poll_time .. '","poll_time_adjust","' .. poll_time_adjust .. '"'
                                 redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm",' .. occupancy_string .. packets_string .. pfc_rx_packets_string .. storm_condition_string .. timestamps .. ']')
                                 is_deadlock = true
@@ -127,6 +144,7 @@ for i = n, 1, -1 do
 
                     -- Save values for next run
                     redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last', packets)
+                    redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES' .. '_last', occupancy_bytes)
                     redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_DETECTION_TIME_LEFT', time_left)
                     if is_deadlock == false then
                         redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last', pfc_rx_packets)
