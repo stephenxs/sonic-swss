@@ -199,6 +199,8 @@ public:
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
 
+    void flushCounters();
+
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
 
