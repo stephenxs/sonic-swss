@@ -16,13 +16,15 @@ extern "C" {
 
 enum class StatsMode
 {
-    READ
+    READ,
+    READ_AND_CLEAR
 };
 
 enum class CounterType
 {
     PORT,
     QUEUE,
+    PRIORITY_GROUP,
     PORT_DEBUG,
     SWITCH_DEBUG,
     MACSEC_SA_ATTR,
