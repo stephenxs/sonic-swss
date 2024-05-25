@@ -50,6 +50,7 @@ class FlexCounterManager
                 const StatsMode stats_mode,
                 const uint polling_interval,
                 const bool enabled,
+                const bool batch = false,
                 swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
         FlexCounterManager()
@@ -61,6 +62,7 @@ class FlexCounterManager
                 const StatsMode stats_mode,
                 const uint polling_interval,
                 const bool enabled,
+                const bool batch = false,
                 swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
         FlexCounterManager(const FlexCounterManager&) = delete;
@@ -77,6 +79,8 @@ class FlexCounterManager
                 const std::unordered_set<std::string>& counter_stats,
                 const sai_object_id_t switch_id=SAI_NULL_OBJECT_ID);
         void clearCounterIdList(const sai_object_id_t object_id);
+
+        void flush();
 
         const std::string& getGroupName() const
         {
@@ -115,6 +119,9 @@ class FlexCounterManager
         swss::FieldValueTuple fv_plugin;
         std::unordered_map<sai_object_id_t, sai_object_id_t> installed_counters;
         bool is_gearbox;
+
+        bool batch;
+        std::unordered_map<sai_object_id_t, std::tuple<std::string, std::string, sai_object_id_t>> pending_counters;
 
         static const std::unordered_map<StatsMode, std::string> stats_mode_lookup;
         static const std::unordered_map<bool, std::string> status_lookup;
