@@ -279,6 +279,9 @@ private:
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
     FlexCounterManager queue_stat_manager;
+    FlexCounterManager queue_watermark_manager;
+    FlexCounterManager pg_watermark_manager;
+    FlexCounterManager pg_drop_stat_manager;
 
     FlexCounterManager gb_port_stat_manager;
     shared_ptr<DBConnector> m_gb_counter_db;

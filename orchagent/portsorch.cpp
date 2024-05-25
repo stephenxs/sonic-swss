@@ -78,6 +78,9 @@ extern event_handle_t g_events_handle;
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
+#define QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
+#define PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
+#define PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 
 // types --------------------------------------------------------------------------------------------------------------
 
@@ -537,6 +540,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                 PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        queue_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        pg_watermark_manager(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        pg_drop_stat_manager(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 }))
 {
     SWSS_LOG_ENTER();
@@ -7612,21 +7618,8 @@ void PortsOrch::addQueueWatermarkFlexCountersPerPort(const Port& port, FlexCount
 
 void PortsOrch::addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex)
 {
-    const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
-
-    /* add watermark queue counters */
-    string key = getQueueWatermarkFlexCounterTableKey(id);
-
-    string delimiter("");
-    std::ostringstream counters_stream;
-    for (const auto& it: queueWatermarkStatIds)
-    {
-        counters_stream << delimiter << sai_serialize_queue_stat(it);
-        delimiter = comma;
-    }
-    auto &&counters_str = counters_stream.str();
-
-    startFlexCounterPolling(gSwitchId, key, counters_str, QUEUE_COUNTER_ID_LIST);
+    auto queue_counter_stats = generateCounterStats(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP);
+    queue_watermark_manager.setCounterIdList(port.m_queue_ids[queueIndex], CounterType::QUEUE, queue_counter_stats);
 }
 
 void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue)
@@ -7912,22 +7905,8 @@ void PortsOrch::addPriorityGroupFlexCountersPerPort(const Port& port, FlexCounte
 
 void PortsOrch::addPriorityGroupFlexCountersPerPortPerPgIndex(const Port& port, size_t pgIndex)
 {
-    const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
-
-    string delimiter = "";
-    std::ostringstream ingress_pg_drop_packets_counters_stream;
-    string key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
-    /* Add dropped packets counters to flex_counter */
-    for (const auto& it: ingressPriorityGroupDropStatIds)
-    {
-        ingress_pg_drop_packets_counters_stream << delimiter << sai_serialize_ingress_priority_group_stat(it);
-        if (delimiter.empty())
-        {
-            delimiter = comma;
-        }
-    }
-    auto &&counters_str = ingress_pg_drop_packets_counters_stream.str();
-    startFlexCounterPolling(gSwitchId, key, counters_str, PG_COUNTER_ID_LIST);
+    auto pg_counter_stats = generateCounterStats(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP);
+    pg_drop_stat_manager.setCounterIdList(port.m_priority_group_ids[pgIndex], CounterType::PRIORITY_GROUP, pg_counter_stats);
 }
 
 void PortsOrch::addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgStates> pgsStateVector)
@@ -7982,22 +7961,8 @@ void PortsOrch::addPriorityGroupWatermarkFlexCountersPerPort(const Port& port, F
 
 void PortsOrch::addPriorityGroupWatermarkFlexCountersPerPortPerPgIndex(const Port& port, size_t pgIndex)
 {
-    const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
-
-    string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
-
-    std::string delimiter = "";
-    std::ostringstream counters_stream;
-    /* Add watermark counters to flex_counter */
-    for (const auto& it: ingressPriorityGroupWatermarkStatIds)
-    {
-        counters_stream << delimiter << sai_serialize_ingress_priority_group_stat(it);
-        delimiter = comma;
-    }
-
-    auto &&counters_str = counters_stream.str();
-
-    startFlexCounterPolling(gSwitchId, key, counters_str, PG_COUNTER_ID_LIST);
+    auto pg_counter_stats = generateCounterStats(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP);
+    pg_watermark_manager.setCounterIdList(port.m_priority_group_ids[pgIndex], CounterType::PRIORITY_GROUP, pg_counter_stats);
 }
 
 void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
@@ -9528,7 +9493,28 @@ void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
 std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& type, bool gearbox)
 {
     std::unordered_set<std::string> counter_stats;
-    if (type == PORT_STAT_COUNTER_FLEX_COUNTER_GROUP)
+    if (type == QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP)
+    {
+        for (const auto& it:queueWatermarkStatIds)
+        {
+            counter_stats.emplace(sai_serialize_queue_stat(it));
+        }
+    }
+    else if (type == PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP)
+    {
+        for (const auto& it:ingressPriorityGroupWatermarkStatIds)
+        {
+            counter_stats.emplace(sai_serialize_ingress_priority_group_stat(it));
+        }
+    }
+    else if (type == PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP)
+    {
+        for (const auto& it:ingressPriorityGroupDropStatIds)
+        {
+            counter_stats.emplace(sai_serialize_ingress_priority_group_stat(it));
+        }
+    }
+    else if (type == PORT_STAT_COUNTER_FLEX_COUNTER_GROUP)
     {
         auto& stat_ids = gearbox ? gbport_stat_ids : port_stat_ids;
         for (const auto& it: stat_ids)
