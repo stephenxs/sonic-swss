@@ -85,7 +85,7 @@ FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string&
         return m_managers[group_name];
     }
     FlexCounterManager *fc_manager = new FlexCounterManager(group_name, stats_mode, polling_interval,
-                                                            enabled, fv_plugin);
+                                                            enabled, false, fv_plugin);
     m_managers[group_name] = fc_manager;
     return fc_manager;
 }
@@ -95,9 +95,10 @@ FlexCounterManager::FlexCounterManager(
         const StatsMode stats_mode,
         const uint polling_interval,
         const bool enabled,
+        const bool batch,
         FieldValueTuple fv_plugin) :
     FlexCounterManager(false, group_name, stats_mode,
-            polling_interval, enabled, fv_plugin)
+                       polling_interval, enabled, batch, fv_plugin)
 {
 }
 
@@ -107,11 +108,13 @@ FlexCounterManager::FlexCounterManager(
         const StatsMode stats_mode,
         const uint polling_interval,
         const bool enabled,
+        const bool batch,
         FieldValueTuple fv_plugin) :
     group_name(group_name),
     stats_mode(stats_mode),
     polling_interval(polling_interval),
     enabled(enabled),
+    batch(batch),
     fv_plugin(fv_plugin),
     is_gearbox(is_gearbox)
 {
@@ -218,12 +221,35 @@ void FlexCounterManager::setCounterIdList(
     auto counter_ids = serializeCounterStats(counter_stats);
     auto effective_switch_id = switch_id == SAI_NULL_OBJECT_ID ? gSwitchId : switch_id;
 
-    startFlexCounterPolling(effective_switch_id, key, counter_ids, counter_type_it->second);
-    installed_counters[object_id] = effective_switch_id;
+    if (batch)
+    {
+        pending_counters[object_id] = make_tuple(counter_ids, counter_type_it->second, effective_switch_id);
+    }
+    else
+    {
+        startFlexCounterPolling(effective_switch_id, key, counter_ids, counter_type_it->second);
+        installed_counters[object_id] = effective_switch_id;
+    }
 
     SWSS_LOG_DEBUG("Updated flex counter id list for object '%" PRIu64 "' in group '%s'.",
             object_id,
             group_name.c_str());
+}
+
+void FlexCounterManager::flush()
+{
+    if (pending_counters.empty())
+    {
+        return;
+    }
+
+    for (const auto& it: pending_counters)
+    {
+        auto key = getFlexCounterTableKey(group_name, it.first);
+        startFlexCounterPolling(get<2>(it.second), key, get<0>(it.second), get<1>(it.second));
+    }
+
+    pending_counters.clear();
 }
 
 // clearCounterIdList clears all stats that are currently being polled from
@@ -239,6 +265,11 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
                 object_id,
                 group_name.c_str());
         return;
+    }
+
+    if (batch)
+    {
+        // TODO: handle pending_counters
     }
 
     auto key = getFlexCounterTableKey(group_name, object_id);
