@@ -223,7 +223,21 @@ void FlexCounterManager::setCounterIdList(
 
     if (batch)
     {
-        pending_counters[object_id] = make_tuple(counter_ids, counter_type_it->second, effective_switch_id);
+        if (!pending_counters.empty())
+        {
+            if (counter_type != pending_counter_type || counter_stats != pending_counter_stats || effective_switch_id != pending_switch_id)
+            {
+                SWSS_LOG_ERROR("Mismatched batch operations, flushing");
+                flush();
+            }
+        }
+        else
+        {
+            pending_counter_type = counter_type;
+            pending_counter_stats = counter_stats;
+            pending_switch_id = effective_switch_id;
+        }
+        pending_counters.emplace(object_id);
     }
     else
     {
@@ -243,10 +257,13 @@ void FlexCounterManager::flush()
         return;
     }
 
+    auto counter_ids = serializeCounterStats(pending_counter_stats);
+    auto counter_type_it = counter_id_field_lookup.find(pending_counter_type);
+
     for (const auto& it: pending_counters)
     {
-        auto key = getFlexCounterTableKey(group_name, it.first);
-        startFlexCounterPolling(get<2>(it.second), key, get<0>(it.second), get<1>(it.second));
+        auto key = getFlexCounterTableKey(group_name, it);
+        startFlexCounterPolling(pending_switch_id, key, counter_ids, counter_type_it->second);
     }
 
     pending_counters.clear();
