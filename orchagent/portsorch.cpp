@@ -537,10 +537,10 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                 PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                 PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
-        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-        queue_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-        pg_watermark_manager(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-        pg_drop_stat_manager(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
+        queue_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
+        pg_watermark_manager(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
+        pg_drop_stat_manager(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
         m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 }))
 {
     SWSS_LOG_ENTER();
@@ -5635,6 +5635,7 @@ void PortsOrch::doTask(Consumer &consumer)
     else if (table_name == APP_PORT_TABLE_NAME)
     {
         doPortTask(consumer);
+        flushCounters();
     }
     else if (table_name == APP_SEND_TO_INGRESS_PORT_TABLE_NAME)
     {
@@ -8040,6 +8041,14 @@ void PortsOrch::generatePortBufferDropCounterMap()
     }
 
     m_isPortBufferDropCounterMapGenerated = true;
+}
+
+void PortsOrch::flushCounters()
+{
+    queue_stat_manager.flush();
+    queue_watermark_manager.flush();
+    pg_watermark_manager.flush();
+    pg_drop_stat_manager.flush();
 }
 
 uint32_t PortsOrch::getNumberOfPortSupportedPgCounters(string port)
