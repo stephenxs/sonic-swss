@@ -121,7 +121,10 @@ class FlexCounterManager
         bool is_gearbox;
 
         bool batch;
-        std::unordered_map<sai_object_id_t, std::tuple<std::string, std::string, sai_object_id_t>> pending_counters;
+        CounterType pending_counter_type;
+        std::unordered_set<std::string> pending_counter_stats;
+        sai_object_id_t pending_switch_id;
+        std::unordered_set<sai_object_id_t> pending_counters;
 
         static const std::unordered_map<StatsMode, std::string> stats_mode_lookup;
         static const std::unordered_map<bool, std::string> status_lookup;
