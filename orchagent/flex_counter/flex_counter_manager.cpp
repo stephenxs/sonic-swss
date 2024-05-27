@@ -223,7 +223,7 @@ void FlexCounterManager::setCounterIdList(
 
     if (batch)
     {
-        if (!pending_counters.empty())
+        if (!pending_sai_objects.empty())
         {
             if (counter_type != pending_counter_type || counter_stats != pending_counter_stats || effective_switch_id != pending_switch_id)
             {
@@ -237,7 +237,7 @@ void FlexCounterManager::setCounterIdList(
             pending_counter_stats = counter_stats;
             pending_switch_id = effective_switch_id;
         }
-        pending_counters.emplace(object_id);
+        pending_sai_objects.emplace(object_id);
     }
     else
     {
@@ -252,7 +252,7 @@ void FlexCounterManager::setCounterIdList(
 
 void FlexCounterManager::flush()
 {
-    if (pending_counters.empty())
+    if (pending_sai_objects.empty())
     {
         return;
     }
@@ -260,13 +260,16 @@ void FlexCounterManager::flush()
     auto counter_ids = serializeCounterStats(pending_counter_stats);
     auto counter_type_it = counter_id_field_lookup.find(pending_counter_type);
 
-    for (const auto& it: pending_counters)
+    auto counter_keys =  group_name + ":";
+    for (const auto& oid: pending_sai_objects)
     {
-        auto key = getFlexCounterTableKey(group_name, it);
-        startFlexCounterPolling(pending_switch_id, key, counter_ids, counter_type_it->second);
+        counter_keys += sai_serialize_object_id(oid) + ",";
     }
+    counter_keys.pop_back();
 
-    pending_counters.clear();
+    startFlexCounterPolling(pending_switch_id, counter_keys, counter_ids, counter_type_it->second);
+
+    pending_sai_objects.clear();
 }
 
 // clearCounterIdList clears all stats that are currently being polled from
@@ -286,7 +289,7 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
 
     if (batch)
     {
-        // TODO: handle pending_counters
+        // TODO: handle pending_sai_objects
     }
 
     auto key = getFlexCounterTableKey(group_name, object_id);
