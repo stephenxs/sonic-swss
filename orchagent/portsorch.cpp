@@ -5936,6 +5936,8 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
         attr.id = SAI_HOSTIF_ATTR_QUEUE;
         attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
         attrs.push_back(attr);
+
+        port.m_host_tx_queue = DEFAULT_HOSTIF_TX_QUEUE;
     }
 
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -7243,6 +7245,10 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
                 {
                     flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
                 }
+                else if (it.second.m_host_tx_queue <= maxQueueNumber)
+                {
+                    flexCounterQueueState.enableQueueCounters(it.second.m_host_tx_queue, it.second.m_host_tx_queue);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             generateQueueMapPerPort(it.second, queuesStateVector.at(it.second.m_alias), false);
@@ -7381,6 +7387,10 @@ void PortsOrch::addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesS
                 {
                     flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
                 }
+                else if (it.second.m_host_tx_queue <= maxQueueNumber)
+                {
+                    flexCounterQueueState.enableQueueCounters(it.second.m_host_tx_queue, it.second.m_host_tx_queue);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             addQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
@@ -7462,6 +7472,10 @@ void PortsOrch::addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates
                 {
                     flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
                 }
+                else if (it.second.m_host_tx_queue <= maxQueueNumber)
+                {
+                    flexCounterQueueState.enableQueueCounters(it.second.m_host_tx_queue, it.second.m_host_tx_queue);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             addQueueWatermarkFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
@@ -7529,6 +7543,11 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
 
     for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
     {
+        if (queueIndex == port.m_host_tx_queue)
+        {
+            continue;
+        }
+
         std::ostringstream name;
         name << port.m_alias << ":" << queueIndex;
 
@@ -7582,6 +7601,11 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
 
     for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
     {
+        if (queueIndex == port.m_host_tx_queue)
+        {
+            continue;
+        }
+
         std::ostringstream name;
         name << port.m_alias << ":" << queueIndex;
         const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
