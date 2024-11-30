@@ -1426,6 +1426,7 @@ void BufferOrch::doTask()
             continue;
         consumer->drain();
     }
+    gPortsOrch->flushCounters();
 }
 
 void BufferOrch::doTask(Consumer &consumer)
@@ -1483,4 +1484,6 @@ void BufferOrch::doTask(Consumer &consumer)
                 break;
         }
     }
+
+    gPortsOrch->flushCounters();
 }

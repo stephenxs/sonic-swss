@@ -201,6 +201,8 @@ public:
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
 
+    void flushCounters();
+
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
 
@@ -278,7 +280,12 @@ private:
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
-    FlexCounterManager queue_stat_manager;
+    FlexCounterManager queue_uni_stat_manager;
+    FlexCounterManager queue_multi_stat_manager;
+    FlexCounterManager queue_uni_watermark_manager;
+    FlexCounterManager queue_multi_watermark_manager;
+    FlexCounterManager pg_watermark_manager;
+    FlexCounterManager pg_drop_stat_manager;
 
     FlexCounterManager gb_port_stat_manager;
     shared_ptr<DBConnector> m_gb_counter_db;
@@ -440,11 +447,11 @@ private:
     void generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq);
     bool m_isQueueFlexCountersAdded = false;
     void addQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
-    void addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq);
+    void addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq, bool multicast);
 
     bool m_isQueueWatermarkFlexCountersAdded = false;
     void addQueueWatermarkFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
-    void addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex);
+    void addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool multicast);
 
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState);
