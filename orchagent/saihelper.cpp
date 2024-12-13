@@ -852,6 +852,7 @@ static inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_grou
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugin_name);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.plugins);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size);
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.bulk_chunk_size_per_prefix);
 }
 
 static inline void initSaiRedisCounterParameterFromString(sai_s8_list_t &sai_s8_list, const std::string &str)
