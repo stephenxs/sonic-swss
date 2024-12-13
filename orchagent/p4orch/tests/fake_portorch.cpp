@@ -8,9 +8,14 @@ extern "C"
 
 #include "portsorch.h"
 
-#define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 1000
-#define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS 60000
-#define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
+#define PORT_SPEED_LIST_DEFAULT_SIZE                     16
+#define PORT_STATE_POLLING_SEC                            5
+#define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
+#define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
+#define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
+#define QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
+#define PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   60000
+#define PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 
 PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames,
                      DBConnector *chassisAppDb)
@@ -21,8 +26,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                         PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
       port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ,
                                     PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
-      queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
-                         QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
+        queue_uni_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
+        queue_multi_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
+        queue_uni_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
+        queue_multi_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
+        pg_watermark_manager(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
+        pg_drop_stat_manager(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true)
 {
 }
 
