@@ -16,13 +16,15 @@ extern "C" {
 
 enum class StatsMode
 {
-    READ
+    READ,
+    READ_AND_CLEAR
 };
 
 enum class CounterType
 {
     PORT,
     QUEUE,
+    PRIORITY_GROUP,
     PORT_DEBUG,
     SWITCH_DEBUG,
     MACSEC_SA_ATTR,
@@ -48,6 +50,7 @@ class FlexCounterManager
                 const StatsMode stats_mode,
                 const uint polling_interval,
                 const bool enabled,
+                const bool batch = false,
                 swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
         FlexCounterManager()
@@ -59,6 +62,7 @@ class FlexCounterManager
                 const StatsMode stats_mode,
                 const uint polling_interval,
                 const bool enabled,
+                const bool batch = false,
                 swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
         FlexCounterManager(const FlexCounterManager&) = delete;
@@ -75,6 +79,8 @@ class FlexCounterManager
                 const std::unordered_set<std::string>& counter_stats,
                 const sai_object_id_t switch_id=SAI_NULL_OBJECT_ID);
         void clearCounterIdList(const sai_object_id_t object_id);
+
+        void flush();
 
         const std::string& getGroupName() const
         {
@@ -113,6 +119,12 @@ class FlexCounterManager
         swss::FieldValueTuple fv_plugin;
         std::unordered_map<sai_object_id_t, sai_object_id_t> installed_counters;
         bool is_gearbox;
+
+        bool batch;
+        CounterType pending_counter_type;
+        std::unordered_set<std::string> pending_counter_stats;
+        sai_object_id_t pending_switch_id;
+        std::unordered_set<sai_object_id_t> pending_sai_objects;
 
         static const std::unordered_map<StatsMode, std::string> stats_mode_lookup;
         static const std::unordered_map<bool, std::string> status_lookup;
