@@ -289,7 +289,7 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
 
     if (batch)
     {
-        // TODO: handle pending_sai_objects
+        pending_sai_objects.erase(object_id);
     }
 
     auto key = getFlexCounterTableKey(group_name, object_id);
