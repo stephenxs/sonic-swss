@@ -26,12 +26,10 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
                         PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
       port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ,
                                     PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
-        queue_uni_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
-        queue_multi_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
-        queue_uni_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
-        queue_multi_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
-        pg_watermark_manager(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true),
-        pg_drop_stat_manager(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, true)
+        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        queue_watermark_manager(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, QUEUE_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        pg_watermark_manager(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ_AND_CLEAR, PG_WATERMARK_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        pg_drop_stat_manager(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PG_DROP_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
 {
 }
 
@@ -613,7 +611,7 @@ task_process_status PortsOrch::setPortAdvSpeeds(Port &port, std::set<sai_uint32_
     return task_success;
 }
 
-bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index)
+bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, sai_queue_type_t &type, uint8_t &index)
 {
     return true;
 }
