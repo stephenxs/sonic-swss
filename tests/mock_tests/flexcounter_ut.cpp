@@ -847,7 +847,7 @@ namespace flexcounter_test
 
         ASSERT_TRUE(checkFlexCounter(PFC_WD_FLEX_COUNTER_GROUP, firstPort.m_queue_ids[3],
                                      {
-                                         {QUEUE_COUNTER_ID_LIST, "SAI_QUEUE_STAT_PACKETS,SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES"},
+                                         {QUEUE_COUNTER_ID_LIST, "SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,SAI_QUEUE_STAT_PACKETS"},
                                          {QUEUE_ATTR_ID_LIST, "SAI_QUEUE_ATTR_PAUSE_STATUS"}
                                      }));
 
