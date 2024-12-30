@@ -27,6 +27,7 @@ enum class CounterType
 {
     PORT,
     QUEUE,
+    QUEUE_ATTR,
     PRIORITY_GROUP,
     PORT_DEBUG,
     SWITCH_DEBUG,
