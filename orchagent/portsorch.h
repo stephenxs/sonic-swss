@@ -280,12 +280,10 @@ private:
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
-    FlexCounterManager queue_uni_stat_manager;
-    FlexCounterManager queue_multi_stat_manager;
-    FlexCounterManager queue_uni_watermark_manager;
-    FlexCounterManager queue_multi_watermark_manager;
-    FlexCounterManager pg_watermark_manager;
-    FlexCounterManager pg_drop_stat_manager;
+    FlexCounterTaggedCachedManager<sai_queue_type_t> queue_stat_manager;
+    FlexCounterTaggedCachedManager<sai_queue_type_t> queue_watermark_manager;
+    FlexCounterTaggedCachedManager<void> pg_watermark_manager;
+    FlexCounterTaggedCachedManager<void> pg_drop_stat_manager;
 
     FlexCounterManager gb_port_stat_manager;
     shared_ptr<DBConnector> m_gb_counter_db;
@@ -441,17 +439,17 @@ private:
     bool getPortAdvSpeeds(const Port& port, bool remote, string& adv_speeds);
     task_process_status setPortAdvSpeeds(Port &port, std::set<sai_uint32_t> &speed_list);
 
-    bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
+    bool getQueueTypeAndIndex(sai_object_id_t queue_id, sai_queue_type_t &type, uint8_t &index);
 
     bool m_isQueueMapGenerated = false;
     void generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq);
     bool m_isQueueFlexCountersAdded = false;
     void addQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
-    void addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq, bool multicast);
+    void addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq, sai_queue_type_t queueType);
 
     bool m_isQueueWatermarkFlexCountersAdded = false;
     void addQueueWatermarkFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
-    void addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool multicast);
+    void addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, sai_queue_type_t queueType);
 
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState);

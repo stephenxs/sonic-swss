@@ -5,7 +5,6 @@
 #include "schema.h"
 #include "rediscommand.h"
 #include "logger.h"
-#include "sai_serialize.h"
 
 #include <macsecorch.h>
 
@@ -19,8 +18,6 @@ using swss::FieldValueTuple;
 using swss::ProducerTable;
 
 extern sai_switch_api_t *sai_switch_api;
-
-extern sai_object_id_t gSwitchId;
 
 const string FLEX_COUNTER_ENABLE("enable");
 const string FLEX_COUNTER_DISABLE("disable");
@@ -85,7 +82,7 @@ FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string&
         return m_managers[group_name];
     }
     FlexCounterManager *fc_manager = new FlexCounterManager(group_name, stats_mode, polling_interval,
-                                                            enabled, false, fv_plugin);
+                                                            enabled, fv_plugin);
     m_managers[group_name] = fc_manager;
     return fc_manager;
 }
@@ -95,10 +92,9 @@ FlexCounterManager::FlexCounterManager(
         const StatsMode stats_mode,
         const uint polling_interval,
         const bool enabled,
-        const bool batch,
         FieldValueTuple fv_plugin) :
     FlexCounterManager(false, group_name, stats_mode,
-                       polling_interval, enabled, batch, fv_plugin)
+            polling_interval, enabled, fv_plugin)
 {
 }
 
@@ -108,13 +104,11 @@ FlexCounterManager::FlexCounterManager(
         const StatsMode stats_mode,
         const uint polling_interval,
         const bool enabled,
-        const bool batch,
         FieldValueTuple fv_plugin) :
     group_name(group_name),
     stats_mode(stats_mode),
     polling_interval(polling_interval),
     enabled(enabled),
-    batch(batch),
     fv_plugin(fv_plugin),
     is_gearbox(is_gearbox)
 {
@@ -221,55 +215,12 @@ void FlexCounterManager::setCounterIdList(
     auto counter_ids = serializeCounterStats(counter_stats);
     auto effective_switch_id = switch_id == SAI_NULL_OBJECT_ID ? gSwitchId : switch_id;
 
-    if (batch)
-    {
-        if (!pending_sai_objects.empty())
-        {
-            if (counter_type != pending_counter_type || counter_stats != pending_counter_stats || effective_switch_id != pending_switch_id)
-            {
-                SWSS_LOG_ERROR("Mismatched batch operations, flushing");
-                flush();
-            }
-        }
-        else
-        {
-            pending_counter_type = counter_type;
-            pending_counter_stats = counter_stats;
-            pending_switch_id = effective_switch_id;
-        }
-        pending_sai_objects.emplace(object_id);
-    }
-    else
-    {
-        startFlexCounterPolling(effective_switch_id, key, counter_ids, counter_type_it->second);
-        installed_counters[object_id] = effective_switch_id;
-    }
+    startFlexCounterPolling(effective_switch_id, key, counter_ids, counter_type_it->second);
+    installed_counters[object_id] = effective_switch_id;
 
     SWSS_LOG_DEBUG("Updated flex counter id list for object '%" PRIu64 "' in group '%s'.",
             object_id,
             group_name.c_str());
-}
-
-void FlexCounterManager::flush()
-{
-    if (pending_sai_objects.empty())
-    {
-        return;
-    }
-
-    auto counter_ids = serializeCounterStats(pending_counter_stats);
-    auto counter_type_it = counter_id_field_lookup.find(pending_counter_type);
-
-    auto counter_keys =  group_name + ":";
-    for (const auto& oid: pending_sai_objects)
-    {
-        counter_keys += sai_serialize_object_id(oid) + ",";
-    }
-    counter_keys.pop_back();
-
-    startFlexCounterPolling(pending_switch_id, counter_keys, counter_ids, counter_type_it->second);
-
-    pending_sai_objects.clear();
 }
 
 // clearCounterIdList clears all stats that are currently being polled from
@@ -285,11 +236,6 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
                 object_id,
                 group_name.c_str());
         return;
-    }
-
-    if (batch)
-    {
-        pending_sai_objects.erase(object_id);
     }
 
     auto key = getFlexCounterTableKey(group_name, object_id);
@@ -312,7 +258,7 @@ string FlexCounterManager::getFlexCounterTableKey(
 
 // serializeCounterStats turns a set of stats into a format suitable for FLEX_COUNTER_DB.
 string FlexCounterManager::serializeCounterStats(
-        const unordered_set<string>& counter_stats) const
+        const unordered_set<string>& counter_stats)
 {
     SWSS_LOG_ENTER();
 
