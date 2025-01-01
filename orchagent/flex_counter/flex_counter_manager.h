@@ -80,12 +80,12 @@ class FlexCounterManager
         void enableFlexCounterGroup();
         void disableFlexCounterGroup();
 
-        void setCounterIdList(
+        virtual void setCounterIdList(
                 const sai_object_id_t object_id,
                 const CounterType counter_type,
                 const std::unordered_set<std::string>& counter_stats,
                 const sai_object_id_t switch_id=SAI_NULL_OBJECT_ID);
-        void clearCounterIdList(const sai_object_id_t object_id);
+        virtual void clearCounterIdList(const sai_object_id_t object_id);
 
         const std::string& getGroupName() const
         {
@@ -279,7 +279,7 @@ class FlexCounterTaggedCachedManager : public FlexCounterCachedManager
             FlexCounterCachedManager::flush(group_name, cached_objects);
         }
 
-        void setCounterIdList(
+        virtual void setCounterIdList(
             const sai_object_id_t object_id,
             const CounterType counter_type,
             const std::unordered_set<std::string>& counter_stats,
@@ -291,7 +291,7 @@ class FlexCounterTaggedCachedManager : public FlexCounterCachedManager
                                                        counter_stats);
         }
 
-        void clearCounterIdList(
+        virtual void clearCounterIdList(
             const sai_object_id_t object_id)
         {
             FlexCounterCachedManager::clearCounterIdList(cached_objects, object_id);
