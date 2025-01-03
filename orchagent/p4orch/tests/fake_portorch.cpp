@@ -699,7 +699,10 @@ void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
 }
 
 template <typename T>
-std::unordered_set<std::string> PortsOrch::generateCounterStats(const vector<T> &counterIds, std::string (*serializer)(const T));
+std::unordered_set<std::string> PortsOrch::generateCounterStats(const vector<T> &counterIds, std::string (*serializer)(const T))
+{
+    return {};
+}
 
 void PortsOrch::doTask(swss::SelectableTimer &timer)
 {
