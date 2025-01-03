@@ -3552,10 +3552,10 @@ bool PortsOrch::initPort(const PortConfig &port)
                 If they are enabled, install the counters immediately */
                 if (flex_counters_orch->getPortCountersState())
                 {
-                    auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
+                    auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
                     port_stat_manager.setCounterIdList(p.m_port_id,
                             CounterType::PORT, port_counter_stats);
-                    auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
+                    auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
                     if (p.m_system_side_id)
                         gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
                                 CounterType::PORT, gbport_counter_stats, p.m_switch_id);
@@ -3565,7 +3565,7 @@ bool PortsOrch::initPort(const PortConfig &port)
                 }
                 if (flex_counters_orch->getPortBufferDropCountersState())
                 {
-                    auto port_buffer_drop_stats = generateCounterStats(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP);
+                    auto port_buffer_drop_stats = generateCounterStats(port_buffer_drop_stat_ids, sai_serialize_port_stat);
                     port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
                 }
 
@@ -7609,7 +7609,7 @@ void PortsOrch::addQueueWatermarkFlexCountersPerPort(const Port& port, FlexCount
 
 void PortsOrch::addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, sai_queue_type_t queueType)
 {
-    auto queue_counter_stats = generateCounterStats(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP);
+    auto queue_counter_stats = generateCounterStats(queueWatermarkStatIds, sai_serialize_queue_stat);
     queue_watermark_manager.setCounterIdList(port.m_queue_ids[queueIndex], CounterType::QUEUE, queue_counter_stats, queueType);
 }
 
@@ -7895,7 +7895,7 @@ void PortsOrch::addPriorityGroupFlexCountersPerPort(const Port& port, FlexCounte
 
 void PortsOrch::addPriorityGroupFlexCountersPerPortPerPgIndex(const Port& port, size_t pgIndex)
 {
-    auto pg_counter_stats = generateCounterStats(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP);
+    auto pg_counter_stats = generateCounterStats(ingressPriorityGroupDropStatIds, sai_serialize_ingress_priority_group_stat);
     pg_drop_stat_manager.setCounterIdList(port.m_priority_group_ids[pgIndex], CounterType::PRIORITY_GROUP, pg_counter_stats);
 }
 
@@ -7951,7 +7951,7 @@ void PortsOrch::addPriorityGroupWatermarkFlexCountersPerPort(const Port& port, F
 
 void PortsOrch::addPriorityGroupWatermarkFlexCountersPerPortPerPgIndex(const Port& port, size_t pgIndex)
 {
-    auto pg_counter_stats = generateCounterStats(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP);
+    auto pg_counter_stats = generateCounterStats(ingressPriorityGroupWatermarkStatIds, sai_serialize_ingress_priority_group_stat);
     pg_watermark_manager.setCounterIdList(port.m_priority_group_ids[pgIndex], CounterType::PRIORITY_GROUP, pg_counter_stats);
 }
 
@@ -8004,8 +8004,8 @@ void PortsOrch::generatePortCounterMap()
         return;
     }
 
-    auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
-    auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
+    auto port_counter_stats = generateCounterStats(port_stat_ids, sai_serialize_port_stat);
+    auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
     for (const auto& it: m_portList)
     {
         // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
@@ -8033,7 +8033,7 @@ void PortsOrch::generatePortBufferDropCounterMap()
         return;
     }
 
-    auto port_buffer_drop_stats = generateCounterStats(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP);
+    auto port_buffer_drop_stats = generateCounterStats(port_buffer_drop_stat_ids, sai_serialize_port_stat);
     for (const auto& it: m_portList)
     {
         // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
@@ -9486,45 +9486,16 @@ void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
     m_tableVoqSystemLagMemberTable->del(key);
 }
 
-std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& type, bool gearbox)
+template <typename T>
+std::unordered_set<std::string> PortsOrch::generateCounterStats(const vector<T> &counterIds, std::string (*serializer)(const T))
 {
     std::unordered_set<std::string> counter_stats;
-    if (type == QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP)
+
+    for (const auto& it:counterIds)
     {
-        for (const auto& it:queueWatermarkStatIds)
-        {
-            counter_stats.emplace(sai_serialize_queue_stat(it));
-        }
+        counter_stats.emplace(serializer(it));
     }
-    else if (type == PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP)
-    {
-        for (const auto& it:ingressPriorityGroupWatermarkStatIds)
-        {
-            counter_stats.emplace(sai_serialize_ingress_priority_group_stat(it));
-        }
-    }
-    else if (type == PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP)
-    {
-        for (const auto& it:ingressPriorityGroupDropStatIds)
-        {
-            counter_stats.emplace(sai_serialize_ingress_priority_group_stat(it));
-        }
-    }
-    else if (type == PORT_STAT_COUNTER_FLEX_COUNTER_GROUP)
-    {
-        auto& stat_ids = gearbox ? gbport_stat_ids : port_stat_ids;
-        for (const auto& it: stat_ids)
-        {
-            counter_stats.emplace(sai_serialize_port_stat(it));
-        }
-    }
-    else if (type == PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP)
-    {
-        for (const auto& it: port_buffer_drop_stat_ids)
-        {
-            counter_stats.emplace(sai_serialize_port_stat(it));
-        }
-    }
+
     return counter_stats;
 }
 
