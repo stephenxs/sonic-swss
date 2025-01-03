@@ -529,7 +529,9 @@ private:
     unique_ptr<LagIdAllocator> m_lagIdAllocator;
     set<sai_object_id_t> m_macsecEnabledPorts;
 
-    std::unordered_set<std::string> generateCounterStats(const string& type, bool gearbox = false);
+    template <typename T>
+    std::unordered_set<std::string> generateCounterStats(const vector<T> &counterIds, std::string (*serializer)(const T));
+
     map<sai_object_id_t, struct queueInfo> m_queueInfo;
 
     /* Protoypes for Path tracing */
