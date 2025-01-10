@@ -278,8 +278,8 @@ private:
     shared_ptr<DBConnector> m_state_db;
     shared_ptr<DBConnector> m_notificationsDb;
 
-    FlexCounterManager port_stat_manager;
-    FlexCounterManager port_buffer_drop_stat_manager;
+    FlexCounterTaggedCachedManager<void> port_stat_manager;
+    FlexCounterTaggedCachedManager<void> port_buffer_drop_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_stat_manager;
     FlexCounterTaggedCachedManager<sai_queue_type_t> queue_watermark_manager;
     FlexCounterTaggedCachedManager<void> pg_watermark_manager;
