@@ -8032,6 +8032,8 @@ void PortsOrch::generatePortBufferDropCounterMap()
 
 void PortsOrch::flushCounters()
 {
+    port_stat_manager.flush();
+    port_buffer_drop_stat_manager.flush();
     queue_stat_manager.flush();
     queue_watermark_manager.flush();
     pg_watermark_manager.flush();
