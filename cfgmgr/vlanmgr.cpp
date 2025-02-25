@@ -80,7 +80,11 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     //               /sbin/ip link del dummy 2>/dev/null;
     //               /sbin/ip link add dummy type dummy &&
     //               /sbin/ip link set dummy master Bridge &&
-    //               /sbin/ip link set dummy up"
+    //               /sbin/ip link set dummy up;
+    //               /sbin/ip link set Bridge down &&
+    //               /sbin/ip link set Bridge up"
+    // Note: We shutdown and start-up the Bridge at the end to ensure that its
+    //       link-local IPv6 address matches its MAC address.
 
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
@@ -92,7 +96,9 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
       + IP_CMD + " link del dev dummy 2>/dev/null; "
       + IP_CMD + " link add dummy type dummy && "
       + IP_CMD + " link set dummy master " + DOT1Q_BRIDGE_NAME + " && "
-      + IP_CMD + " link set dummy up" + "\"";
+      + IP_CMD + " link set dummy up; "
+      + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " down && "
+      + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " up\"";
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
@@ -190,14 +196,33 @@ bool VlanMgr::setHostVlanMac(int vlan_id, const string &mac)
 {
     SWSS_LOG_ENTER();
 
+    std::string res;
+
+    /*
+     * Bring down the bridge before changing MAC addresses of the bridge and the VLAN interface.
+     * This is done so that the IPv6 link-local addresses of the bridge and the VLAN interface
+     * are updated after MAC change.
+     * /sbin/ip link set Bridge down
+     */
+    string bridge_down(IP_CMD " link set " DOT1Q_BRIDGE_NAME " down");
+    EXEC_WITH_ERROR_THROW(bridge_down, res);
+
     // The command should be generated as:
-    // /sbin/ip link set Vlan{{vlan_id}} address {{mac}}
+    // /sbin/ip link set Vlan{{vlan_id}} address {{mac}} &&
+    // /sbin/ip link set Bridge address {{mac}}
     ostringstream cmds;
     cmds << IP_CMD " link set " VLAN_PREFIX + std::to_string(vlan_id) + " address " << shellquote(mac) << " && "
             IP_CMD " link set " DOT1Q_BRIDGE_NAME " address " << shellquote(mac);
-
-    std::string res;
+    res.clear();
     EXEC_WITH_ERROR_THROW(cmds.str(), res);
+
+    /*
+     * Start up the bridge again.
+     * /sbin/ip link set Bridge up
+     */
+    string bridge_up(IP_CMD " link set " DOT1Q_BRIDGE_NAME " up");
+    res.clear();
+    EXEC_WITH_ERROR_THROW(bridge_up, res);
 
     return true;
 }
@@ -229,10 +254,16 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
     }
     catch (const std::runtime_error& e)
     {
-        if (!isMemberStateOk(port_alias))
+        // Race conidtion can happen with portchannel removal might happen
+	// but state db is not updated yet so we can do retry instead of sending exception
+	if (!port_alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+	{
             return false;
+	}
         else
+	{
             EXEC_WITH_ERROR_THROW(cmds.str(), res);
+	}
     }
 
     return true;

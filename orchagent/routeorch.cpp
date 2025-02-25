@@ -1361,7 +1361,11 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
             nhopgroup_shared_set[next_hop_id].insert(it);
         }
     }
-
+    if (!next_hop_ids.size())
+    {
+        SWSS_LOG_INFO("Skipping creation of nexthop group as none of nexthop are active");
+        return false;
+    }
     sai_attribute_t nhg_attr;
     vector<sai_attribute_t> nhg_attrs;
 
@@ -1734,9 +1738,15 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
             SWSS_LOG_INFO("Failed to get next hop %s for %s",
                    (*it).to_string().c_str(), ipPrefix.to_string().c_str());
             it = next_hop_set.erase(it);
+            continue;
         }
-        else
-            it++;
+        if(m_neighOrch->isNextHopFlagSet(*it, NHFLAGS_IFDOWN))
+        {
+            SWSS_LOG_INFO("Interface down for NH %s, skip this NH", (*it).to_string().c_str());
+            it = next_hop_set.erase(it);
+            continue;
+        }
+        it++;
     }
 
     /* Return if next_hop_set is empty */
@@ -2498,8 +2508,22 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     size_t creating = gRouteBulker.creating_entries_count(route_entry);
     if (it_route == it_route_table->second.end() && creating == 0)
     {
+        /*
+         * Clean up the VRF routing table if
+         * 1. there is no routing entry in the VRF routing table and
+         * 2. there is no pending bulk creation routing entry in gRouteBulker
+         * The ideal way of the 2nd condition is to check pending bulk creation entries of a certain VRF.
+         * However, we can not do that unless going over all entries in gRouteBulker.
+         * So, we use above strict conditions here
+         */
+        if (it_route_table->second.size() == 0 && gRouteBulker.creating_entries_count() == 0)
+        {
+            m_syncdRoutes.erase(vrf_id);
+            m_vrfOrch->decreaseVrfRefCount(vrf_id);
+        }
         SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
-                ipPrefix.to_string().c_str());
+                      ipPrefix.to_string().c_str());
+ 
         return true;
     }
 
