@@ -1785,8 +1785,8 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         }
         else if (aclMetadataDscpActionLookup.find(action) != aclMetadataDscpActionLookup.cend())
         {
-            // For TC_ACTION, use AclRulePacket
-            if (action == ACTION_TC)
+            // For TC_ACTION and META_DATA_ACTION, use AclRulePacket
+            if (action == ACTION_TC || action == ACTION_META_DATA)
             {
                 return make_shared<AclRulePacket>(acl, rule, table);
             }
@@ -2062,6 +2062,30 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         catch (const std::exception& e)
         {
             SWSS_LOG_ERROR("Invalid DSCP value %s: %s", _attr_value.c_str(), e.what());
+            return false;
+        }
+    }
+    else if (attr_name == ACTION_META_DATA)
+    {
+        try
+        {
+            uint32_t metadata = to_uint<uint32_t>(_attr_value);
+            // Check that metadata is within valid range
+            if (metadata < m_pAclOrch->getAclMetaDataMin() || metadata > m_pAclOrch->getAclMetaDataMax())
+            {
+                SWSS_LOG_ERROR("Invalid metadata value %s, should be between %d-%d",
+                            _attr_value.c_str(),
+                            m_pAclOrch->getAclMetaDataMin(),
+                            m_pAclOrch->getAclMetaDataMax());
+                return false;
+            }
+            actionData.parameter.u32 = metadata;
+            actionData.enable = true;
+            return setAction(aclMetadataDscpActionLookup[attr_name], actionData);
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Invalid metadata value %s: %s", _attr_value.c_str(), e.what());
             return false;
         }
     }
