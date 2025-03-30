@@ -141,7 +141,8 @@ static acl_packet_action_lookup_t aclPacketActionLookup =
 static acl_rule_attr_lookup_t aclMetadataDscpActionLookup =
 {
     { ACTION_META_DATA,                     SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA},
-    { ACTION_DSCP,                          SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP}
+    { ACTION_DSCP,                          SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP},
+    { ACTION_TC,                            SAI_ACL_ENTRY_ATTR_ACTION_SET_TC}
 };
 
 static acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
@@ -1782,6 +1783,21 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
 
             return make_shared<AclRuleDTelWatchListEntry>(acl, dtel, rule, table);
         }
+        else if (aclMetadataDscpActionLookup.find(action) != aclMetadataDscpActionLookup.cend())
+        {
+            // For TC_ACTION, use AclRulePacket
+            if (action == ACTION_TC)
+            {
+                return make_shared<AclRulePacket>(acl, rule, table);
+            }
+            // For DSCP_ACTION in regular tables, use AclRulePacket
+            else if (action == ACTION_DSCP && !acl->isUsingEgrSetDscp(table) && table != EGR_SET_DSCP_TABLE_ID)
+            {
+                return make_shared<AclRulePacket>(acl, rule, table);
+            }
+            // For special DSCP_ACTION in EgrSetDscp tables, use AclRuleUnderlaySetDscp
+            return make_shared<AclRuleUnderlaySetDscp>(acl, rule, table, m_metadataMgr);
+        }
     }
 
     if (!aclRule)
@@ -2014,6 +2030,40 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
             return false;
         }
         actionData.parameter.oid = param_id;
+    }
+    else if (attr_name == ACTION_TC)
+    {
+        try
+        {
+            actionData.parameter.u8 = to_uint<uint8_t>(_attr_value);
+            actionData.enable = true;
+            return setAction(aclMetadataDscpActionLookup[attr_name], actionData);
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Invalid Traffic Class (TC) value %s: %s", _attr_value.c_str(), e.what());
+            return false;
+        }
+    }
+    else if (attr_name == ACTION_DSCP)
+    {
+        try
+        {
+            // DSCP values should be between 0-63
+            actionData.parameter.u8 = to_uint<uint8_t>(_attr_value);
+            if (actionData.parameter.u8 > 63)
+            {
+                SWSS_LOG_ERROR("Invalid DSCP value %s, should be between 0-63", _attr_value.c_str());
+                return false;
+            }
+            actionData.enable = true;
+            return setAction(aclMetadataDscpActionLookup[action_str], actionData);
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Invalid DSCP value %s: %s", _attr_value.c_str(), e.what());
+            return false;
+        }
     }
     else
     {
