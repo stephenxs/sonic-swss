@@ -56,6 +56,7 @@ const int TCP_PROTOCOL_NUM = 6; // TCP protocol number
 acl_rule_attr_lookup_t aclMatchLookup =
 {
     { MATCH_IN_PORTS,          SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS },
+    { MATCH_IN_PORT,           SAI_ACL_ENTRY_ATTR_FIELD_IN_PORT },
     { MATCH_OUT_PORT,          SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORT },
     { MATCH_OUT_PORTS,         SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS },
     { MATCH_SRC_IP,            SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP },
@@ -960,6 +961,23 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
             matchData.data.objlist.count = static_cast<uint32_t>(inPorts.size());
             matchData.data.objlist.list = inPorts.data();
+        }
+        else if (attr_name == MATCH_IN_PORT)
+        {
+            auto alias = attr_value;
+            Port port;
+            if (!gPortsOrch->getPort(alias, port))
+            {
+                SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
+                return false;
+            }
+            if (port.m_type != Port::PHY)
+            {
+                SWSS_LOG_ERROR("Cannot bind rule to %s: IN_PORT can only match physical interfaces", alias.c_str());
+                return false;
+            }
+
+            matchData.data.oid = port.m_port_id;
         }
         else if (attr_name == MATCH_OUT_PORTS)
         {
