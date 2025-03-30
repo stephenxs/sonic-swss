@@ -1212,8 +1212,19 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_METADATA)
         {
-            matchData.data.u32 = to_uint<uint32_t>(attr_value);
-            matchData.mask.u32 = 0xFFFFFFFF;
+            /* Support both exact value match and value/mask match */
+            auto metadata_data = tokenize(attr_value, '/');
+
+            matchData.data.u32 = to_uint<uint32_t>(metadata_data[0]);
+
+            if (metadata_data.size() == 2)
+            {
+                matchData.mask.u32 = to_uint<uint32_t>(metadata_data[1]);
+            }
+            else
+            {
+                matchData.mask.u32 = 0xFFFFFFFF;
+            }
 
             if (matchData.data.u32 < m_pAclOrch->getAclMetaDataMin() || matchData.data.u32 > m_pAclOrch->getAclMetaDataMax())
             {
