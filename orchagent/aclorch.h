@@ -37,6 +37,7 @@
 #define MATCH_NEXT_HEADER       "NEXT_HEADER"
 #define MATCH_VLAN_ID           "VLAN_ID"
 #define MATCH_TCP_FLAGS         "TCP_FLAGS"
+#define MATCH_IP_FRAG           "IP_FRAG"
 #define MATCH_IP_TYPE           "IP_TYPE"
 #define MATCH_DSCP              "DSCP"
 #define MATCH_L4_SRC_PORT_RANGE "L4_SRC_PORT_RANGE"
@@ -103,6 +104,12 @@
 #define IP_TYPE_ARP_REQUEST     "ARP_REQUEST"
 #define IP_TYPE_ARP_REPLY       "ARP_REPLY"
 
+#define IP_FRAG_ANY             "ANY"
+#define IP_FRAG_NON_FRAG        "NON_FRAG"
+#define IP_FRAG_NON_FRAG_OR_HEAD "NON_FRAG_OR_HEAD"
+#define IP_FRAG_HEAD            "HEAD"
+#define IP_FRAG_NON_HEAD        "NON_HEAD"
+
 #define MLNX_MAX_RANGES_COUNT   16
 #define INGRESS_TABLE_DROP      "IngressTableDrop"
 #define EGRESS_TABLE_DROP       "EgressTableDrop"
@@ -143,6 +150,7 @@ typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_range_type_t> acl_range_type_lookup_t;
 typedef map<string, sai_acl_bind_point_type_t> acl_bind_point_type_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
+typedef map<string, sai_acl_ip_frag_t> acl_ip_frag_lookup_t;
 typedef map<string, sai_acl_dtel_flow_op_t> acl_dtel_flow_op_type_lookup_t;
 typedef map<string, sai_packet_action_t> acl_packet_action_lookup_t;
 typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;

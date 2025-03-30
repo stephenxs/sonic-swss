@@ -69,6 +69,7 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_IP_PROTOCOL,       SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL },
     { MATCH_NEXT_HEADER,       SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER },
     { MATCH_TCP_FLAGS,         SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS },
+    { MATCH_IP_FRAG,           SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_FRAG },
     { MATCH_IP_TYPE,           SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE },
     { MATCH_DSCP,              SAI_ACL_ENTRY_ATTR_FIELD_DSCP },
     { MATCH_TC,                SAI_ACL_ENTRY_ATTR_FIELD_TC },
@@ -500,6 +501,15 @@ static acl_ip_type_lookup_t aclIpTypeLookup =
     { IP_TYPE_ARP,         SAI_ACL_IP_TYPE_ARP },
     { IP_TYPE_ARP_REQUEST, SAI_ACL_IP_TYPE_ARP_REQUEST },
     { IP_TYPE_ARP_REPLY,   SAI_ACL_IP_TYPE_ARP_REPLY }
+};
+
+static acl_ip_frag_lookup_t aclIpFragTypeLookup =
+{
+    { IP_FRAG_ANY,             SAI_ACL_IP_FRAG_ANY },
+    { IP_FRAG_NON_FRAG,        SAI_ACL_IP_FRAG_NON_FRAG },
+    { IP_FRAG_NON_FRAG_OR_HEAD, SAI_ACL_IP_FRAG_NON_FRAG_OR_HEAD },
+    { IP_FRAG_HEAD,            SAI_ACL_IP_FRAG_HEAD },
+    { IP_FRAG_NON_HEAD,        SAI_ACL_IP_FRAG_NON_HEAD }
 };
 
 static map<sai_acl_counter_attr_t, sai_acl_counter_attr_t> aclCounterLookup =
@@ -1176,6 +1186,21 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                     m_pAclOrch->getAclMetaDataMin(), m_pAclOrch->getAclMetaDataMax());
                 return false;
             }
+        }
+        else if (attr_name == MATCH_IP_FRAG)
+        {
+            string frag_type = to_upper(attr_value);
+
+            auto it = aclIpFragTypeLookup.find(frag_type);
+            if (it == aclIpFragTypeLookup.end())
+            {
+                SWSS_LOG_ERROR("Invalid IP fragment type: %s", frag_type.c_str());
+                return false;
+            }
+
+            matchData.data.u8 = static_cast<uint8_t>(it->second);
+            matchData.data.u8 &= 0xff;
+            matchData.mask.u8 = 0xff;
         }
     }
     catch (exception &e)
