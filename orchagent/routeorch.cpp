@@ -85,6 +85,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
             m_maxNextHopGroupCount /= DEFAULT_MAX_ECMP_GROUP_SIZE;
         }
     }
+    m_maxNextHopGroupCount = 200;
     vector<FieldValueTuple> fvTuple;
     fvTuple.emplace_back("MAX_NEXTHOP_GROUP_COUNT", to_string(m_maxNextHopGroupCount));
     m_switchOrch->set_switch_capability(fvTuple);
@@ -1311,7 +1312,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount)
     {
-        SWSS_LOG_DEBUG("Failed to create new next hop group. \
+        SWSS_LOG_NOTICE("Failed to create new next hop group. \
                         Reaching maximum number of next hop groups.");
         return false;
     }
