@@ -36,7 +36,7 @@ void usage()
     cout << "       -a asic_table.json: ASIC-specific parameters definition (mandatory for dynamic mode)" << endl;
     cout << "       -p peripheral_table.json: Peripheral (eg. gearbox) parameters definition (optional for dynamic mode)" << endl;
     cout << "       -z zero_profiles.json: Zero profiles definition for reclaiming unused buffers (optional for dynamic mode)" << endl;
-    cout << "       -r: Enable ring buffer for improved performance (optional)" << endl;
+    cout << "       -r Enable ring buffer for improved performance (optional)" << endl;
 }
 
 void popRingBuffer()
@@ -200,6 +200,20 @@ int main(int argc, char **argv)
             }
         }
 
+        // Create ring buffer if enabled via CLI option
+        if (gUseRingBuffer) {
+            gRingBuffer = std::make_shared<RingBuffer>();
+            Executor::gRingBuffer = gRingBuffer;
+            Orch::gRingBuffer = gRingBuffer;
+            SWSS_LOG_NOTICE("RingBuffer created for buffermgrd at %p!", (void *)gRingBuffer.get());
+
+            // Enable ring buffer for all tables in BufferMgr
+            gRingBuffer->m_ringBufferDefault = true;
+
+            // Start the ring buffer thread
+            gRingThread = std::thread(popRingBuffer);
+        }
+
         if (dynamicMode)
         {
             WarmStart::initialize("buffermgrd", "swss");
@@ -238,20 +252,6 @@ int main(int argc, char **argv)
             };
             auto buffermgr = new BufferMgr(&cfgDb, &applDb, pg_lookup_file, cfg_buffer_tables);
             cfgOrchList.emplace_back(buffermgr);
-            
-            // Create ring buffer if enabled via CLI option
-            if (gUseRingBuffer) {
-                gRingBuffer = std::make_shared<RingBuffer>();
-                Executor::gRingBuffer = gRingBuffer;
-                Orch::gRingBuffer = gRingBuffer;
-                SWSS_LOG_NOTICE("RingBuffer created for buffermgrd at %p!", (void *)gRingBuffer.get());
-                
-                // Enable ring buffer for all tables in BufferMgr
-                buffermgr->setRingBufferDefault(true);
-                
-                // Start the ring buffer thread
-                gRingThread = std::thread(popRingBuffer);
-            }
         }
         else
         {
@@ -301,13 +301,6 @@ int main(int argc, char **argv)
 
             auto *c = (Executor *)sel;
             c->execute();
-
-            /* After each iteration, periodically check all m_toSync map to
-             * execute all the remaining tasks that need to be retried. */
-            if (!gUseRingBuffer || !gRingBuffer || (gRingBuffer->IsEmpty() && gRingBuffer->IsIdle()))
-            {
-                buffmgr->doTask();
-            }
         }
     }
     catch(const std::exception &e)

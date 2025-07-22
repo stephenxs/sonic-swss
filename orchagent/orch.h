@@ -199,6 +199,8 @@ private:
 public:
     RingBuffer(int size=RING_SIZE);
     bool thread_created = false;
+    bool m_ringBufferDefault = false;
+
     std::atomic<bool> thread_exited{false};
 
     // pause the ring thread if the buffer is empty
@@ -312,8 +314,6 @@ public:
      */
     void flushResponses();
 
-    void setRingBufferDefault(bool enabled);
-
 protected:
     ConsumerMap m_consumerMap;
 
@@ -339,7 +339,6 @@ protected:
     ResponsePublisher m_publisher{"APPL_STATE_DB"};
 private:
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
-    bool m_ringBufferDefault = false;
 };
 
 #include "request_parser.h"

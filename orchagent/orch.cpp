@@ -947,14 +947,9 @@ void Orch::addExecutor(Executor* executor)
         // Example: APP_NEXTHOP_GROUP_TABLE_NAME,
     };
 
-    if (gRingBuffer && (m_ringBufferDefault || ringBufferServedTables.find(executor->getName()) != ringBufferServedTables.end())) {
+    if (gRingBuffer && (gRingBuffer->m_ringBufferDefault || ringBufferServedTables.find(executor->getName()) != ringBufferServedTables.end())) {
         gRingBuffer->addExecutor(executor);
     }
-}
-
-void Orch::setRingBufferDefault(bool enabled)
-{
-    m_ringBufferDefault = enabled;
 }
 
 Executor *Orch::getExecutor(string executorName)
