@@ -2,6 +2,7 @@
 #include <getopt.h>
 #include <vector>
 #include <mutex>
+#include <thread>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
@@ -21,15 +22,47 @@ using json = nlohmann::json;
 /* SELECT() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 
+// Global ring buffer and thread for buffermgrd
+std::shared_ptr<RingBuffer> gRingBuffer = nullptr;
+std::thread gRingThread;
+bool gUseRingBuffer = false;
+
 void usage()
 {
-    cout << "Usage: buffermgrd <-l pg_lookup.ini|-a asic_table.json [-p peripheral_table.json] [-z zero_profiles.json]>" << endl;
+    cout << "Usage: buffermgrd <-l pg_lookup.ini|-a asic_table.json [-p peripheral_table.json] [-z zero_profiles.json] [-r]>" << endl;
     cout << "       -l pg_lookup.ini: PG profile look up table file (mandatory for static mode)" << endl;
     cout << "           format: csv" << endl;
     cout << "           values: 'speed, cable, size, xon,  xoff, dynamic_threshold, xon_offset'" << endl;
     cout << "       -a asic_table.json: ASIC-specific parameters definition (mandatory for dynamic mode)" << endl;
     cout << "       -p peripheral_table.json: Peripheral (eg. gearbox) parameters definition (optional for dynamic mode)" << endl;
     cout << "       -z zero_profiles.json: Zero profiles definition for reclaiming unused buffers (optional for dynamic mode)" << endl;
+    cout << "       -r: Enable ring buffer for improved performance (optional)" << endl;
+}
+
+void popRingBuffer()
+{
+    SWSS_LOG_ENTER();
+
+    // make sure there is only one thread created to run popRingBuffer()
+    if (!gRingBuffer || gRingBuffer->thread_created)
+        return;
+
+    gRingBuffer->thread_created = true;
+    SWSS_LOG_NOTICE("buffermgrd starts the popRingBuffer thread!");
+
+    while (!gRingBuffer->thread_exited)
+    {
+        gRingBuffer->pauseThread();
+
+        gRingBuffer->setIdle(false);
+
+        AnyTask func;
+        while (gRingBuffer->pop(func)) {
+            func();
+        }
+
+        gRingBuffer->setIdle(true);
+    }
 }
 
 void dump_db_item(KeyOpFieldsValuesTuple &db_item)
@@ -101,7 +134,7 @@ int main(int argc, char **argv)
 
     SWSS_LOG_NOTICE("--- Starting buffermgrd ---");
 
-    while ((opt = getopt(argc, argv, "l:a:p:z:h")) != -1 )
+    while ((opt = getopt(argc, argv, "l:a:p:z:r:h")) != -1 )
     {
         switch (opt)
         {
@@ -119,6 +152,9 @@ int main(int argc, char **argv)
             break;
         case 'z':
             zero_profile_file = optarg;
+            break;
+        case 'r':
+            gUseRingBuffer = true;
             break;
         default: /* '?' */
             usage();
@@ -200,7 +236,22 @@ int main(int argc, char **argv)
                 CFG_DEVICE_METADATA_TABLE_NAME,
                 CFG_PORT_QOS_MAP_TABLE_NAME
             };
-            cfgOrchList.emplace_back(new BufferMgr(&cfgDb, &applDb, pg_lookup_file, cfg_buffer_tables));
+            auto buffermgr = new BufferMgr(&cfgDb, &applDb, pg_lookup_file, cfg_buffer_tables);
+            cfgOrchList.emplace_back(buffermgr);
+            
+            // Create ring buffer if enabled via CLI option
+            if (gUseRingBuffer) {
+                gRingBuffer = std::make_shared<RingBuffer>();
+                Executor::gRingBuffer = gRingBuffer;
+                Orch::gRingBuffer = gRingBuffer;
+                SWSS_LOG_NOTICE("RingBuffer created for buffermgrd at %p!", (void *)gRingBuffer.get());
+                
+                // Enable ring buffer for all tables in BufferMgr
+                buffermgr->setRingBufferDefault(true);
+                
+                // Start the ring buffer thread
+                gRingThread = std::thread(popRingBuffer);
+            }
         }
         else
         {
@@ -230,17 +281,49 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                buffmgr->doTask();
+                if (gUseRingBuffer && gRingBuffer)
+                {
+                    if (!gRingBuffer->IsEmpty() || !gRingBuffer->IsIdle())
+                    {
+                        gRingBuffer->notify();
+                    }
+                    else
+                    {
+                        buffmgr->doTask();
+                    }
+                }
+                else
+                {
+                    buffmgr->doTask();
+                }
                 continue;
             }
 
             auto *c = (Executor *)sel;
             c->execute();
+
+            /* After each iteration, periodically check all m_toSync map to
+             * execute all the remaining tasks that need to be retried. */
+            if (!gUseRingBuffer || !gRingBuffer || (gRingBuffer->IsEmpty() && gRingBuffer->IsIdle()))
+            {
+                buffmgr->doTask();
+            }
         }
     }
     catch(const std::exception &e)
     {
         SWSS_LOG_ERROR("Runtime error: %s", e.what());
     }
+    
+    // Cleanup ring buffer thread
+    if (gUseRingBuffer && gRingBuffer) {
+        gRingBuffer->thread_exited = true;
+        gRingBuffer->notify();
+    }
+    
+    if (gUseRingBuffer && gRingThread.joinable()) {
+        gRingThread.join();
+    }
+    
     return -1;
 }

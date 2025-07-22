@@ -933,8 +933,28 @@ void Orch::addExecutor(Executor* executor)
     }
 
     if (gRingBuffer && executor->getName() == APP_ROUTE_TABLE_NAME) {
+    // Define the set of table names that should be served by the ring buffer
+    static const std::set<std::string> ringBufferServedTables = {
+        APP_ROUTE_TABLE_NAME,
+        APP_BUFFER_POOL_TABLE_NAME,
+        APP_BUFFER_PROFILE_TABLE_NAME,
+        APP_BUFFER_PG_TABLE_NAME,
+        APP_BUFFER_QUEUE_TABLE_NAME,
+        APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+        APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
+        // Add more table names here as needed for scalability
+        // Example: APP_LABEL_ROUTE_TABLE_NAME,
+        // Example: APP_NEXTHOP_GROUP_TABLE_NAME,
+    };
+
+    if (gRingBuffer && (m_ringBufferDefault || ringBufferServedTables.find(executor->getName()) != ringBufferServedTables.end())) {
         gRingBuffer->addExecutor(executor);
     }
+}
+
+void Orch::setRingBufferDefault(bool enabled)
+{
+    m_ringBufferDefault = enabled;
 }
 
 Executor *Orch::getExecutor(string executorName)

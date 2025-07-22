@@ -4,6 +4,8 @@
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "consumerstatetable.h"
+#include "subscriberstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
 #include "timer.h"
@@ -48,7 +50,6 @@ BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_f
 }
 
 //# speed, cable, size,    xon,  xoff, threshold,  xon_offset
-//  40000   5m    34816   18432  16384 1           2496
 void BufferMgr::readPgProfileLookupFile(string file)
 {
     SWSS_LOG_NOTICE("Read lookup configuration file...");

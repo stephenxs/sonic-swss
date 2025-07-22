@@ -311,6 +311,9 @@ public:
      * @brief Flush pending responses
      */
     void flushResponses();
+
+    void setRingBufferDefault(bool enabled);
+
 protected:
     ConsumerMap m_consumerMap;
 
@@ -336,6 +339,7 @@ protected:
     ResponsePublisher m_publisher{"APPL_STATE_DB"};
 private:
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
+    bool m_ringBufferDefault = false;
 };
 
 #include "request_parser.h"
