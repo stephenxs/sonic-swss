@@ -151,6 +151,12 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_cfgDefaultLosslessBufferParam.hget(keys[0], "default_dynamic_th", m_defaultThreshold);
     }
 
+    // Fetch buffer pool configuration from the database to accelerate the process
+    addExistingData(CFG_BUFFER_POOL_TABLE_NAME);
+    doTask();
+    SWSS_LOG_NOTICE("Loaded buffer pools");
+    checkSharedBufferPoolSize(true);
+
     // m_waitApplyAdditionalZeroProfiles represents for how long applying additional zero profiles will be deferred
     // after normal profiles and profiles for configured items have been applied
     // For warm reboot, it is not deferred as the additional zero profiles have been in the APPL_DB
